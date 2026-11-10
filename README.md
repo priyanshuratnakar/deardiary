@@ -8,19 +8,16 @@ An AI powered, local first personal diary for your Mac.
 
 A blank page to write on, an AI you can talk the page through with, and a memory of what keeps coming up in your writing that you can see and correct. Everything is kept on your Mac as plain files.
 
-Dear Diary is built on [freewrite](https://github.com/farzaa/freewrite) by Farza, and everything freewrite does is still here.
-
 ![An empty page in Dear Diary](docs/pictures/page.png)
 
 ## What it does
 
-- **The page.** freewrite's blank page, with its timer, fonts, video entries, backspace off and History. A new entry each day, saved as you type.
+- **The page.** A blank page with a timer, fonts, video entries, backspace off and History. A new entry each day, saved as you type.
 - **Talk.** Write first, then open a column beside the page and think it through with an AI that has read the entry. It asks more than it tells.
 - **Memory.** The AI reads each entry once you have finished with it and keeps notes on the people, feelings, questions and decisions that keep coming up. Every note is tied to a line you wrote. If the AI quotes something that is not in your entry, the note is thrown away.
 - **A map of that memory.** Thoughts are coloured dots and the days you wrote are small grey ones. Click a thought to read the lines behind it. Rename, merge, link or delete anything the AI got wrong, and your fixes win from then on.
 - **Versions.** A copy of an entry every five minutes while it changes, so you can read an earlier one and bring it back.
 - **A lock.** Dear Diary opens locked and asks for Touch ID or your Mac password. It locks again when your Mac sleeps and after a while in the background.
-- **Your old entries.** If you used freewrite before, Settings can copy your entries across, videos included.
 
 Talk, Memory and Versions are off until you turn them on in Settings. The lock is on from the start.
 
@@ -48,7 +45,7 @@ The pictures on this page are drawn by the app's own tests, with made-up entries
 There is no download yet. For now you build it yourself.
 
 1. You need macOS 14 or later and Xcode 16 or later.
-2. Clone this repository and open `freewrite.xcodeproj`. (The project keeps freewrite's name so changes from freewrite stay easy to bring in. The app it builds is called Dear Diary.)
+2. Clone this repository and open `freewrite.xcodeproj`. (The project file keeps its original name. The app it builds is called Dear Diary.)
 3. Under Signing & Capabilities, choose your own team for each of the three targets.
 4. Press Run.
 
@@ -91,11 +88,8 @@ This is a personal project and it is early. It has about 500 automated tests. Ru
 - New code lives in its own folders under `freewrite/`: `AI`, `Memory`, `Talk`, `Map`, `Versions`, `Settings`, `Page` and `Lock`.
 - Run the tests with `./scripts/test.sh`.
 
-## Thanks
-
-- [freewrite](https://github.com/farzaa/freewrite) by Farza, which this is a fork of.
-- Icons from the free [Pikaicons](https://pikaicons.com) pack, with a few drawn to match.
-
 ## License
 
-MIT, the same as freewrite. See `LICENSE`, which keeps freewrite's copyright notice. The icons' own notice is in `freewrite/Page/PikaIcons-LICENSE.txt`.
+MIT. See `LICENSE`.
+
+<sub>Built on [freewrite](https://github.com/farzaa/freewrite) by Farza. Icons by [Pikaicons](https://pikaicons.com).</sub>

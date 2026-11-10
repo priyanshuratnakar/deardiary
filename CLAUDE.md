@@ -399,7 +399,8 @@ The third milestone of the second round. A new journal opens on Dear Diary's own
 - `freewrite/default.md` is now Dear Diary's welcome: what the page is, what is new (Talk, Memory, Versions, all off), where Settings is, and that old freewrite entries can be brought across. freewrite's guide moved, unchanged, to `freewrite/freewrite-welcome.md` and is still bundled.
 - `ContentView.createNewEntry()` still loads `default.md` for the first entry of an empty journal, so `ContentView` was not changed for this. A journal that already holds freewrite's guide keeps it; nothing rewrites an existing entry.
 - `JournalReader.isWelcome(_:)` is true for both pages (`bundledWelcomeText()` and `bundledEarlierWelcomeTexts()`). Memory, versions and the importer all skip a welcome page through it.
-- **If the wording of `default.md` changes again**, keep the old wording as another bundled file and add it to `bundledEarlierWelcomeTexts()`. Otherwise a journal that opened on the old wording would have it treated as the user's own writing.
+- **If the wording of `default.md` changes again**, keep the old wording as another bundled file and add it to `bundledEarlierWelcomeTexts()`. Otherwise a journal that opened on the old wording would have it treated as the user's own writing. This has been done once: the M10 wording is kept as `freewrite/dear-diary-welcome-1.md`.
+- **The welcome was reworded after M12.** It no longer says "click Talk" or "click New Entry", because since M11 the bar is marks; it points at the speech bubble, the joined dots and the pencil. And it credits freewrite in one line at the very end (see "Credit" below).
 
 **Bringing entries from freewrite**
 
@@ -518,6 +519,12 @@ Tests: `LockTests.swift` (the settings, and the lock with a clock the test contr
 If the lock ever cannot be opened, the app can be started unlocked from Terminal by adding `-lock.enabled NO` after the path to its program inside the app bundle. That overrides the saved switch for that one run.
 
 Not built: a menu item or shortcut to lock, and any encryption of the files.
+
+### Credit
+
+The owner wants freewrite credited once and quietly, at the end: one small line at the bottom of `README.md` ("Built on freewrite by Farza. Icons by Pikaicons.") and one line at the end of the welcome page. Do not add credit lines elsewhere, and do not describe features as "freewrite's" in anything the user or the public reads. A test checks the welcome names freewrite only in its last line.
+
+What must stay, whatever the wording: `LICENSE` with Farza's copyright notice (the MIT licence requires it in every copy) and `freewrite/Page/PikaIcons-LICENSE.txt`. Places that name freewrite because they have to are fine: "Bring entries from freewrite…" in Settings, the project file's name, and the journal folder's name.
 
 ### Installing the app on this Mac
 

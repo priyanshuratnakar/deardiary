@@ -42,13 +42,14 @@ struct JournalReader {
         return try? String(contentsOf: url, encoding: .utf8)
     }
 
-    /// freewrite's guide, which Dear Diary used as its welcome page before it had its own.
+    /// Welcome pages from before: freewrite's guide, which Dear Diary used before it had its
+    /// own, and earlier wordings of Dear Diary's own. A journal that opened on one of them
+    /// still holds it, and it is still not the user's writing.
     static func bundledEarlierWelcomeTexts() -> [String] {
-        guard let url = Bundle.main.url(forResource: "freewrite-welcome", withExtension: "md"),
-              let text = try? String(contentsOf: url, encoding: .utf8) else {
-            return []
+        ["freewrite-welcome", "dear-diary-welcome-1"].compactMap { name in
+            guard let url = Bundle.main.url(forResource: name, withExtension: "md") else { return nil }
+            return try? String(contentsOf: url, encoding: .utf8)
         }
-        return [text]
     }
 
     /// True if this is a welcome page, now or from before, rather than the user's own writing.

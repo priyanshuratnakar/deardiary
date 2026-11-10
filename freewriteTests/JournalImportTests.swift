@@ -118,8 +118,30 @@ private final class MovingIn: @unchecked Sendable {
 
         #expect(welcome.hasPrefix("Dear Diary"))
         #expect(welcome.contains("Nothing you write leaves this Mac unless you ask it to."))
-        #expect(welcome.contains("click New Entry"))
+        // The bar is marks now, so the page points at them by what they look like.
+        #expect(welcome.contains("click the pencil"))
+        #expect(!welcome.contains("click New Entry"))
         #expect(!welcome.contains("Welcome to Freewrite"))
+    }
+
+    @Test func freewriteIsCreditedOnceAndAtTheEnd() throws {
+        let welcome = try #require(JournalReader.bundledWelcomeText())
+        let lines = welcome.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+
+        #expect(welcome.components(separatedBy: "Farza").count - 1 == 1)
+        #expect(lines.last?.hasPrefix("Built on freewrite by Farza.") == true)
+        // Nothing above the last line names it.
+        #expect(lines.dropLast().allSatisfy { !$0.localizedCaseInsensitiveContains("freewrite") })
+    }
+
+    @Test func anEarlierWordingOfTheWelcomeStillCountsAsAWelcome() throws {
+        let earlier = JournalReader.bundledEarlierWelcomeTexts()
+        let reader = JournalReader(root: FileManager.default.temporaryDirectory)
+
+        #expect(earlier.count == 2)
+        let firstDearDiaryWelcome = try #require(earlier.last)
+        #expect(firstDearDiaryWelcome.contains("It is built on freewrite by Farza"))
+        #expect(reader.isWelcome("\n\n" + firstDearDiaryWelcome))
     }
 
     @Test func freewritesGuideIsStillBundledAndStillCountsAsAWelcome() throws {

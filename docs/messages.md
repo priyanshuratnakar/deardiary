@@ -2,7 +2,7 @@
 
 This is the copy the fork added: error lines, empty states and confirmations. Each one is a single plain line, says what happened, and says what to do next when there is something to do. Edit the wording in the file named beside each group, then update this list.
 
-freewrite's own wording (the bottom bar, the video recorder) is not listed here and was not changed. The welcome page a new journal opens on is Dear Diary's own since M10; its text is the file `freewrite/default.md`. freewrite's guide is kept, unchanged, as `freewrite/freewrite-welcome.md`.
+freewrite's own wording (the bottom bar, the video recorder) is not listed here and was not changed. The welcome page a new journal opens on is Dear Diary's own since M10; its text is the file `freewrite/default.md`. Its last line is the one place the app credits freewrite. Earlier welcome pages are kept, unchanged, so journals that opened on them are still recognised: `freewrite/freewrite-welcome.md` (freewrite's guide) and `freewrite/dear-diary-welcome-1.md` (Dear Diary's first wording).
 
 ## When the AI cannot answer
 
