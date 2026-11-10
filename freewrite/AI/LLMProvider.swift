@@ -2,9 +2,10 @@
 //  LLMProvider.swift
 //  Dear Diary
 //
-//  A small, provider-neutral way to ask an AI model for text. Claude is the
-//  only provider today; others can be added later by writing another type
-//  that follows this protocol.
+//  A small, provider-neutral way to ask an AI model for text. Three clients
+//  follow this protocol: Claude (AnthropicProvider), anything that speaks the
+//  OpenAI chat format (OpenAICompatibleProvider) and a model on this Mac
+//  (OllamaProvider). AIRouter sends each request to the one chosen in Settings.
 //
 
 import Foundation
@@ -56,6 +57,10 @@ protocol LLMProvider {
 enum LLMError: Error, Equatable {
     case aiOff
     case missingKey
+    /// "Other" is chosen but no address has been given.
+    case missingAddress
+    /// No model has been chosen for this service yet.
+    case missingModel
     case invalidKey
     case billing
     case permission
@@ -69,39 +74,191 @@ enum LLMError: Error, Equatable {
     case server
     case unexpected
 
-    /// A short, plain sentence for the talk column, the map or Settings.
+    /// The message as it reads when Claude is the service. Kept for the places that only ever use Claude.
     var userMessage: String {
+        userMessage(for: .claude)
+    }
+
+    /// A short, plain sentence for the talk column, the map or Settings, naming the service in use.
+    func userMessage(for kind: AIProviderKind) -> String {
+        let service = kind.serviceName
         switch self {
         case .aiOff:
             return "AI is off. Turn it on in Settings to use this."
         case .missingKey:
             return "No API key yet. Add one in Settings."
+        case .missingAddress:
+            return "No address yet. Add one in Settings."
+        case .missingModel:
+            return "No model chosen yet. Pick one in Settings."
         case .invalidKey:
-            return "Claude didn't accept that API key. Check it and save it again."
+            return "\(service) didn't accept that API key. Check it and save it again."
         case .billing:
-            return "There's a billing problem on your Anthropic account. Check your credits there."
+            return kind.accountName.map { "There's a billing problem on your \($0) account. Check your credits there." }
+                ?? "There's a billing problem on your account with that service. Check your credits there."
         case .permission:
-            return "Your API key isn't allowed to do that. Check your Anthropic account."
+            return kind.accountName.map { "Your API key isn't allowed to do that. Check your \($0) account." }
+                ?? "Your API key isn't allowed to do that. Check your account with that service."
         case .modelNotFound:
-            return "That model name wasn't found, or your account can't use it. Check the model in Settings."
+            return kind == .local
+                ? "That model isn't on this Mac any more. Pick another in Settings."
+                : "That model name wasn't found, or your account can't use it. Check the model in Settings."
         case .rateLimited:
             return "You've reached a usage limit for now. Try again in a little while."
         case .overloaded:
-            return "Claude is busy right now. Try again in a moment."
+            return "\(service) is busy right now. Try again in a moment."
         case .offline:
-            return "Couldn't reach Claude. Check your internet connection."
+            switch kind {
+            case .local:
+                return "Couldn't reach Ollama. Open the Ollama app, then try again."
+            case .other:
+                return "Couldn't reach the AI service. Check the address in Settings and your connection."
+            case .claude, .openai:
+                return "Couldn't reach \(service). Check your internet connection."
+            }
         case .refused:
-            return "Claude declined to respond to this."
+            return "\(service) declined to respond to this."
         case .truncated:
             return "The reply was cut off before it finished. Try again."
         case .rejected(let detail):
             return detail.isEmpty
-                ? "Claude couldn't accept that request."
-                : "Claude couldn't accept that request: \(detail)"
+                ? "\(service) couldn't accept that request."
+                : "\(service) couldn't accept that request: \(detail)"
         case .server:
-            return "Something went wrong on Claude's side. Try again in a moment."
+            return kind == .local
+                ? "Something went wrong in Ollama. Try again in a moment."
+                : "Something went wrong on \(kind.serviceNameInline)'s side. Try again in a moment."
         case .unexpected:
             return "Something unexpected went wrong. Try again."
         }
+    }
+}
+
+/// One model a service offers, for the pickers in Settings.
+struct AIModelChoice: Equatable, Identifiable {
+    /// The name sent to the service.
+    let id: String
+    /// The name shown in Settings.
+    let name: String
+    /// A short extra, such as the size of a model on this Mac ("8.0B").
+    var detail: String? = nil
+}
+
+/// Sends each request to whichever service is chosen in Settings.
+/// Talk, memory and the connection test all go through this.
+struct AIRouter: LLMProvider {
+    static let shared = AIRouter(
+        kind: { AISettings.shared.savedProvider() },
+        claude: { AnthropicProvider.shared },
+        openAIStyle: { OpenAICompatibleProvider.shared },
+        local: { OllamaProvider.shared }
+    )
+
+    let kind: () -> AIProviderKind
+    let claude: () -> LLMProvider
+    let openAIStyle: () -> LLMProvider
+    let local: () -> LLMProvider
+
+    private func provider() -> LLMProvider {
+        switch kind() {
+        case .claude: return claude()
+        case .openai, .other: return openAIStyle()
+        case .local: return local()
+        }
+    }
+
+    func stream(_ request: LLMRequest) -> AsyncThrowingStream<String, Error> {
+        guard !request.model.isEmpty else {
+            return AsyncThrowingStream { $0.finish(throwing: LLMError.missingModel) }
+        }
+        return provider().stream(request)
+    }
+
+    func complete(_ request: LLMRequest) async throws -> LLMReply {
+        guard !request.model.isEmpty else {
+            throw LLMError.missingModel
+        }
+        return try await provider().complete(request)
+    }
+
+    /// The models the chosen service offers, newest or most relevant first.
+    func models() async throws -> [AIModelChoice] {
+        switch kind() {
+        case .claude: return try await AnthropicProvider.shared.models()
+        case .openai, .other: return try await OpenAICompatibleProvider.shared.models()
+        case .local: return try await OllamaProvider.shared.models()
+        }
+    }
+}
+
+/// Removes a model's private thinking when it arrives mixed into the reply as
+/// <think>…</think>, which some open models do. Text is fed in pieces as it
+/// streams, so a tag split across two pieces is handled too.
+struct ThinkTagFilter {
+    private static let open = "<think>"
+    private static let close = "</think>"
+
+    private var pending = ""
+    private var inside = false
+    private var hasEmitted = false
+
+    /// Takes the next piece and returns what may be shown so far.
+    mutating func feed(_ piece: String) -> String {
+        pending += piece
+        var output = ""
+
+        while true {
+            if inside {
+                if let end = pending.range(of: Self.close) {
+                    pending = String(pending[end.upperBound...])
+                    inside = false
+                    continue
+                }
+                // Keep only what could be the start of the closing tag.
+                pending = Self.partialSuffix(of: pending, matching: Self.close)
+                break
+            }
+            if let start = pending.range(of: Self.open) {
+                output += pending[..<start.lowerBound]
+                pending = String(pending[start.upperBound...])
+                inside = true
+                continue
+            }
+            let held = Self.partialSuffix(of: pending, matching: Self.open)
+            output += pending.dropLast(held.count)
+            pending = held
+            break
+        }
+        return release(output)
+    }
+
+    /// Call when the reply has ended: returns anything still held back.
+    mutating func finish() -> String {
+        let rest = inside ? "" : pending
+        pending = ""
+        return release(rest)
+    }
+
+    /// Blank space before the first visible words (left behind by a thinking block) is dropped.
+    private mutating func release(_ text: String) -> String {
+        guard !hasEmitted else { return text }
+        let trimmed = String(text.drop(while: { $0.isWhitespace }))
+        if !trimmed.isEmpty {
+            hasEmitted = true
+        }
+        return trimmed
+    }
+
+    /// The longest ending of `text` that is also a beginning of `tag` (but not all of it).
+    private static func partialSuffix(of text: String, matching tag: String) -> String {
+        var length = min(text.count, tag.count - 1)
+        while length > 0 {
+            let suffix = String(text.suffix(length))
+            if tag.hasPrefix(suffix) {
+                return suffix
+            }
+            length -= 1
+        }
+        return ""
     }
 }

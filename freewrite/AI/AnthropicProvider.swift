@@ -20,6 +20,8 @@ import Foundation
 
 final class AnthropicProvider: LLMProvider, @unchecked Sendable {
     static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
+    /// The list of models, newest first. Checked against the docs on 11 Nov 2026.
+    static let modelsEndpoint = URL(string: "https://api.anthropic.com/v1/models?limit=100")!
     static let apiVersion = "2026-10-21"
 
     /// Turns on Anthropic's server-side retry: if a model's safety checks decline a
@@ -89,6 +91,53 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
         } catch {
             throw Self.normalized(error)
         }
+    }
+
+    /// The Claude models this key can use, newest first, by the names Anthropic gives them.
+    /// Models that have been retired or are on their way out are left off.
+    func models() async throws -> [AIModelChoice] {
+        do {
+            let apiKey: String
+            switch access() {
+            case .off:
+                throw LLMError.aiOff
+            case .noKey:
+                throw LLMError.missingKey
+            case .allowed(let key):
+                apiKey = key
+            }
+            var urlRequest = URLRequest(url: Self.modelsEndpoint)
+            urlRequest.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+            urlRequest.setValue(Self.apiVersion, forHTTPHeaderField: "anthropic-version")
+            let (data, response) = try await session.data(for: urlRequest)
+            guard let http = response as? HTTPURLResponse else {
+                throw LLMError.unexpected
+            }
+            guard (200..<300).contains(http.statusCode) else {
+                throw Self.error(forStatus: http.statusCode, body: data)
+            }
+            return Self.modelChoices(from: data)
+        } catch {
+            throw Self.normalized(error)
+        }
+    }
+
+    static func modelChoices(from data: Data) -> [AIModelChoice] {
+        struct List: Decodable {
+            struct Model: Decodable {
+                let id: String
+                let display_name: String?
+                let lifecycle: String?
+            }
+
+            let data: [Model]
+        }
+        guard let list = try? JSONDecoder().decode(List.self, from: data) else {
+            return []
+        }
+        return list.data
+            .filter { $0.lifecycle == nil || $0.lifecycle == "active" }
+            .map { AIModelChoice(id: $0.id, name: $0.display_name ?? $0.id) }
     }
 
     // MARK: - Sending

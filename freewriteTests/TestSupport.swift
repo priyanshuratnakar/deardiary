@@ -48,14 +48,38 @@ final class StubURLProtocol: URLProtocol {
 
     private static let state = State()
 
+    /// Canned replies kept apart by host, for suites that run at the same time as others.
+    private static let hostLock = NSLock()
+    private static var hostStates: [String: State] = [:]
+
+    private static func state(forHost host: String, create: Bool) -> State? {
+        hostLock.lock()
+        defer { hostLock.unlock() }
+        if let existing = hostStates[host] { return existing }
+        guard create else { return nil }
+        let made = State()
+        hostStates[host] = made
+        return made
+    }
+
     /// Sets the canned replies (used in order, the last one repeating) and forgets earlier requests.
     static func install(_ stubs: Stub...) {
         state.install(stubs)
     }
 
+    /// The same, for requests to one made-up host only (for example "openai.test").
+    static func install(forHost host: String, _ stubs: Stub...) {
+        state(forHost: host, create: true)?.install(stubs)
+    }
+
     /// Every request that tried to reach the network since the last `install`.
     static var requests: [URLRequest] {
         state.requests
+    }
+
+    /// Every request to one made-up host since its last `install`.
+    static func requests(toHost host: String) -> [URLRequest] {
+        state(forHost: host, create: false)?.requests ?? []
     }
 
     static func makeSession() -> URLSession {
@@ -73,7 +97,8 @@ final class StubURLProtocol: URLProtocol {
     }
 
     override func startLoading() {
-        let stub = Self.state.record(request)
+        let hostState = request.url?.host.flatMap { Self.state(forHost: $0, create: false) }
+        let stub = (hostState ?? Self.state).record(request)
 
         if let failure = stub.failure {
             client?.urlProtocol(self, didFailWithError: URLError(failure))

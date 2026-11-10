@@ -2,8 +2,8 @@
 //  Keychain.swift
 //  Dear Diary
 //
-//  Stores one secret (the Claude API key) in the macOS Keychain.
-//  The key is never written to a file, to UserDefaults, or to a log.
+//  Stores a secret (an API key) in the macOS Keychain. Each service has its
+//  own item. A key is never written to a file, to UserDefaults, or to a log.
 //
 
 import Foundation
@@ -20,6 +20,16 @@ struct Keychain {
         service: (Bundle.main.bundleIdentifier ?? "com.priyanshuratnakar.deardiary") + ".anthropic-api-key",
         account: "api-key"
     )
+
+    /// The item for another service's key, kept beside this one. For Claude's item
+    /// "…anthropic-api-key" and the name "openai-api-key" it is "…openai-api-key".
+    func sibling(named name: String) -> Keychain {
+        let suffix = "anthropic-api-key"
+        let other = service.hasSuffix(suffix)
+            ? String(service.dropLast(suffix.count)) + name
+            : service + "." + name
+        return Keychain(service: other, account: account)
+    }
 
     private var baseQuery: [String: Any] {
         [

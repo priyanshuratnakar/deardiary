@@ -35,7 +35,7 @@ New files (the project picks up anything under `freewrite/` automatically, no pr
 - `freewrite/Settings/SettingsView.swift`: the Settings window (AI on/off, API key, the two models, a Test connection button). It is opened from the app menu (Settings…, ⌘,) through a SwiftUI `Settings` scene in `freewriteApp.swift`.
 - `freewrite/Settings/StorageRoot.swift`: decides which folder the journal lives in (see below).
 
-**The network gate.** Every request goes through `AnthropicProvider.authorizedRequest`, which calls `AISettings.access()` first. If AI is off or there is no key, it throws `LLMError.aiOff` or `.missingKey` before `URLSession` is touched. All AI networking must go through `AnthropicProvider`; do not create another `URLSession` anywhere else.
+**The network gate.** (Widened in M8 to three clients, each with its own gate; see below.) Every request goes through `AnthropicProvider.authorizedRequest`, which calls `AISettings.access()` first. If AI is off or there is no key, it throws `LLMError.aiOff` or `.missingKey` before `URLSession` is touched. All AI networking must go through `AnthropicProvider`; do not create another `URLSession` anywhere else.
 
 **Privacy rules for new code.** Never log entry text, memory content, prompts, replies or the API key, including in debug `print`s. The AI and Settings files contain no `print` calls; keep it that way.
 
@@ -70,7 +70,7 @@ New files:
 
 Rules the code follows (keep them when changing it):
 
-- **When Talk shows.** Only when AI is on and a key is saved (`TalkController.isAvailable`) and a text entry is open. Otherwise freewrite's "Chat" button is shown, unchanged. Video entries always keep "Chat".
+- **When Talk shows.** Only when AI is on and a key is saved (`TalkController.isAvailable`; since M8, when the chosen service is ready) and a text entry is open. Otherwise freewrite's "Chat" button is shown, unchanged. Video entries always keep "Chat".
 - **When talk speaks first.** Once, at the moment it is switched on, and only if the page has writing and that entry has no saved conversation. Showing a different entry while talk is on never sends anything by itself.
 - **What is sent.** Each request is `Prompts.talkSystem` (the voice plus the entry as it reads at that moment, between `<entry>` markers) and the conversation so far. Since M4, notes from memory are added when memory is on (see below).
 - **Off means off.** Switching talk off, switching AI off in Settings, or removing the key cancels any reply in progress and drops the partial text. A cancelled request that has not started yet is never sent.
@@ -315,6 +315,41 @@ Changes in `ContentView.swift` (all marked with a "Dear Diary" comment; these fo
 - **Dark mode.** Every new screen is drawn in both modes by the picture tests. `AppearanceTests` measures each text colour against its background in both modes: body and strong text at 7 to 1 or better, the quiet grey words (freewrite's own bottom-bar grey) and secondary text at 3 to 1 or better. Dots on the map are at 3 to 1 or better on black; on white the amber for ideas is the weakest at a little over 2 to 1, which is one reason the kind is always in words too.
 
 Tests: `VersionsTests.swift` (the store, the keeper with a clock the test controls, the screen's model, the switch), `VersionsSnapshotTests.swift` (pictures of the versions screen and the History icon) and `AppearanceTests.swift`.
+
+### M8: any AI, and Settings that cannot be broken
+
+M8 is the first milestone of the second round (see "Second round" in `docs/PRD.md`). The look stays freewrite's. `ContentView.swift`, the entitlements and the project file were not touched.
+
+**Four services.** "Runs on" in Settings chooses between them (`AIProviderKind` in `AISettings.swift`): `local` ("On this Mac", a free open model through Ollama), `openai`, `claude` (the default, so nothing changes for an existing setup) and `other` (any address that speaks the OpenAI chat format). Each service keeps its own models and its own key.
+
+New and changed files, all in `freewrite/AI/` unless noted:
+
+- `AISettings.swift`: `AIProviderKind`, the chosen service (`ai.provider`), models per service (`ai.<service>.talkModel` and `ai.<service>.digestModel`; Claude keeps `ai.talkModel` and `ai.digestModel`), the address for "Other" (`ai.other.baseURL`), `setupGap` (what is still missing: a key, an address or a model), `isReady` and `readiness`. Only Claude has default models. The others have none, so nothing is ever sent to a model the user did not pick.
+- `Keychain.swift`: one item per service. `sibling(named:)` gives OpenAI's and Other's items beside Claude's.
+- `LLMProvider.swift`: `AIRouter` (sends each request to the chosen service, and refuses a request with no model), `LLMError.userMessage(for:)` (the same problem described in the name of the service in use), `AIModelChoice`, and `ThinkTagFilter` (drops private thinking that some open models mix into a reply as `<think>…</think>`).
+- `OpenAICompatibleProvider.swift`: the OpenAI chat format over `URLSession`. `POST {base}/chat/completions`, streamed, ending with `data: [DONE]`. For OpenAI it sends `max_completion_tokens` and asks for token counts; for "Other" it sends the older `max_tokens`. A required JSON shape goes as `response_format` with a strict schema.
+- `OllamaProvider.swift`: Ollama's own chat format. `POST http://localhost:11434/api/chat`, streamed as one JSON object per line. It always sends `options.num_ctx` (`AILimits.localContextTokens`, 16,384), because Ollama's default of about 4,000 tokens would silently cut off an entry and its memory. That is why it does not use Ollama's OpenAI-style address, which cannot set this. A required JSON shape goes as `format`.
+- `AnthropicProvider.swift`: gains `models()` (`GET /v1/models?limit=100`).
+- `ModelCatalog.swift`: the list of models the chosen service offers, for the pickers.
+- `freewrite/Settings/SettingsView.swift`: the "Runs on" row, the key and address rows, `ModelPickerRow` and `ModelList` (a pop-up list in the style of freewrite's Chat pop-up).
+
+Rules the code follows (keep them when changing it):
+
+1. **Every client has a gate, checked before the network is touched.** Claude: `AISettings.access()`. OpenAI and Other: `AISettings.endpointAccess()`. Ollama: `AISettings.localAccess()`. Each is shut when AI is off and when another service is chosen. This replaces M1's rule that all networking goes through `AnthropicProvider`: `URLSession` may now appear in the three client files and nowhere else.
+2. **The model list obeys the same gates.** `ModelCatalog` asks for nothing while AI is off or while a key or an address is missing. Opening Settings with AI off makes no network request, not even to this Mac.
+3. **Models are picked from the service's own list.** The one exception is "Other" when the service has no list to give: then the name is typed, and Settings says why.
+4. **On this Mac, the first model found is used** until the user picks another, and a model that has been removed from Ollama is replaced. For the other services no model is chosen on the user's behalf.
+5. **Talk and Map show when the chosen service is ready** (`AISettings.isReady`: AI on, a key if the service needs one, an address for Other, a talk model). `TalkController` follows `AISettings.readiness`, which announces changes at once. Memory needs a memory model as well (`memoryAllowed()`).
+6. **Optional parts are dropped, once, if a model rejects them.** A request refused with HTTP 400 is sent again without the required JSON shape (and, for the OpenAI format, without the ceiling on the reply), and that model is remembered for the rest of the run. The prompts already describe the shape and the parsers are strict, so a reply in the wrong shape is still refused.
+7. **Only Claude gets the retry on a declined reply** (`retryIfDeclined`). The other clients ignore it.
+8. **Model names still live only in `AISettings`**, and now only as Claude's two defaults.
+9. **Old results do not linger in Settings.** The result of "Test connection" is cleared when AI, the service, its key or the talk model changes, and the word is switched off until the service is ready.
+
+Plain HTTP to `localhost` works from the sandboxed app with the entitlement it already has; this was tried, and no change to the project was needed.
+
+Messages: every line that used to say "Claude" now names the service in use. `docs/messages.md` lists them all.
+
+Tests: `ProviderTests.swift` (the settings for each service, the gates, both new clients, Claude's model list, the router, the model catalogue, the thinking filter, messages per service) and more pictures in `SettingsSnapshotTests.swift` (every service and the states in between). `StubURLProtocol` can now keep canned replies apart by host (`install(forHost:)`), so the suites for different clients run side by side. `SettingsBox` in `ProviderTestSupport.swift` gives throwaway settings with their own Keychain items. Nothing has been tried against a real OpenAI or Ollama server.
 
 ## Product Vision & User Experience
 

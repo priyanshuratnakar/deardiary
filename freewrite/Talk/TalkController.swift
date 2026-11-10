@@ -57,7 +57,7 @@ final class TalkTranscript: ObservableObject {
 
 @MainActor
 final class TalkController: ObservableObject {
-    /// True when AI is on and an API key is saved. The Talk word only shows then.
+    /// True when AI is on and the chosen service is set up. The Talk word only shows then.
     @Published private(set) var isAvailable = false
     /// True while the talk column is open.
     @Published private(set) var isOn = false
@@ -83,7 +83,7 @@ final class TalkController: ObservableObject {
         store: ConversationStore = ConversationStore(),
         memoryStore: MemoryStore = MemoryStore(),
         now: @escaping () -> Date = { Date() },
-        provider: @escaping () -> LLMProvider = { AnthropicProvider.shared },
+        provider: @escaping () -> LLMProvider = { AIRouter.shared },
         talkSwitchedOn: @escaping () -> Void = { MemoryEngine.shared.nudge(includeFresh: true) }
     ) {
         self.settings = settings
@@ -92,12 +92,9 @@ final class TalkController: ObservableObject {
         self.now = now
         self.makeProvider = provider
         self.talkSwitchedOn = talkSwitchedOn
-        self.isAvailable = settings.aiEnabled && settings.hasAPIKey
+        self.isAvailable = settings.isReady
 
-        settings.$aiEnabled
-            .combineLatest(settings.$hasAPIKey)
-            .map { $0 && $1 }
-            .removeDuplicates()
+        settings.readiness
             .sink { [weak self] available in
                 self?.availabilityChanged(available)
             }
@@ -265,7 +262,7 @@ final class TalkController: ObservableObject {
 
         let text = reply.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
-            transcript.notice = "Claude answered with nothing."
+            transcript.notice = "\(settings.provider.serviceName) answered with nothing."
             transcript.canRetry = true
             return
         }
@@ -278,7 +275,9 @@ final class TalkController: ObservableObject {
         clearReplyState()
         let known = (error as? LLMError) ?? .unexpected
         // A declined reply shows the support options too, in case the entry was a hard one.
-        transcript.notice = known == .refused ? Prompts.talkDeclinedNotice : known.userMessage
+        transcript.notice = known == .refused
+            ? Prompts.talkDeclined(by: settings.provider)
+            : known.userMessage(for: settings.provider)
         transcript.canRetry = true
     }
 

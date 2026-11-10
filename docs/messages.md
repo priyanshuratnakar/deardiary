@@ -4,14 +4,18 @@ This is the copy the fork added: error lines, empty states and confirmations. Ea
 
 freewrite's own wording (the bottom bar, the welcome guide, the video recorder) is not listed here and was not changed.
 
-## When Claude cannot answer
+## When the AI cannot answer
 
 Shown in the talk column (with a "Try again" word), under "Test connection" in Settings, and as the memory line in Settings and under the map. File: `freewrite/AI/LLMProvider.swift`.
+
+Each line names the service in use. They are written here as they read with Claude; with another service "Claude" becomes "OpenAI", "Ollama" or "The AI service", and "Anthropic" becomes "OpenAI".
 
 | When | Message |
 | --- | --- |
 | AI is switched off | AI is off. Turn it on in Settings to use this. |
 | No key saved | No API key yet. Add one in Settings. |
+| "Other" with no address | No address yet. Add one in Settings. |
+| No model picked | No model chosen yet. Pick one in Settings. |
 | The key is wrong | Claude didn't accept that API key. Check it and save it again. |
 | The account has no credit | There's a billing problem on your Anthropic account. Check your credits there. |
 | The key is not allowed | Your API key isn't allowed to do that. Check your Anthropic account. |
@@ -19,6 +23,10 @@ Shown in the talk column (with a "Try again" word), under "Test connection" in S
 | Too many requests | You've reached a usage limit for now. Try again in a little while. |
 | Claude is overloaded | Claude is busy right now. Try again in a moment. |
 | No internet | Couldn't reach Claude. Check your internet connection. |
+| Ollama is not running | Couldn't reach Ollama. Open the Ollama app, then try again. |
+| "Other" cannot be reached | Couldn't reach the AI service. Check the address in Settings and your connection. |
+| A model was removed from Ollama | That model isn't on this Mac any more. Pick another in Settings. |
+| A fault inside Ollama | Something went wrong in Ollama. Try again in a moment. |
 | Claude declined | Claude declined to respond to this. |
 | The reply stopped early | The reply was cut off before it finished. Try again. |
 | Claude rejected the request | Claude couldn't accept that request. (Claude's own reason is added when it gives one.) |
@@ -50,7 +58,7 @@ Shown in Settings under "Memory is On", and under the map. File: `freewrite/Memo
 | After a tidy | Tidied on Monday 30 November 2026: merged 1, retired 2, 1 pattern across weeks. |
 | A tidy with nothing to do | Tidied on Monday 30 November 2026: nothing needed changing. |
 | The tidy's answer was unusable | The last tidy couldn't be used, so nothing was changed. |
-| Before a rebuild | This sends 9 entries to Claude and replaces what it has learned. Your fixes are kept. |
+| Before a rebuild | This has the AI read 9 entries again and replaces what it has learned. Your fixes are kept. |
 | Before forgetting | This deletes the memory folder, including your fixes, and turns memory off. Your entries are not touched. |
 
 ## The map
@@ -88,3 +96,20 @@ File: `freewrite/Settings/SettingsView.swift`.
 | --- | --- |
 | The key could not be stored | Couldn't save the key to your Keychain. |
 | The connection test came back empty | Claude answered with nothing. Try again. |
+| A key is still needed | Add a key to use Talk and Memory. |
+| "Other" still needs an address | Add an address to use Talk and Memory. |
+| A model still has to be picked | Choose a model to use Talk and Memory. |
+| Looking for Ollama | Looking for Ollama… |
+| Ollama found | Ollama is running. 3 models found. |
+| Ollama has no models | Ollama is running, but it has no models yet. Download one in the Ollama app, then check again. |
+| In place of a model's name | Turn AI on first · Add a key first · Add an address first · Loading models… · Not available · No models found · Choose a model |
+| "Other" has no model list | This service did not list its models, so type the model's name as the service writes it. |
+
+What each service is, under "Runs on":
+
+| Service | Line |
+| --- | --- |
+| On this Mac | A free open model that runs on this Mac through Ollama. Nothing you write leaves this Mac. |
+| OpenAI | OpenAI, through your own API key. Entry text is sent to OpenAI when you talk or build memory. A ChatGPT plan does not include this. |
+| Claude | Claude, through your own API key from Anthropic. Entry text is sent to Anthropic when you talk or build memory. |
+| Other | Any service that speaks the OpenAI chat format, at an address you give. Entry text is sent to that address when you talk or build memory. |

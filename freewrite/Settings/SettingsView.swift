@@ -19,17 +19,23 @@ struct SettingsView: View {
     @ObservedObject private var versions: VersionSettings
     @ObservedObject private var versionIndex: VersionIndex
     private let versionActions: VersionActions
+    @ObservedObject private var catalog: ModelCatalog
+    /// What "Test connection" talks to. Tests pass a pretend service.
+    private let connection: LLMProvider
     @AppStorage("colorScheme") private var colorSchemeString: String = "light"
 
     /// The app always uses the shared settings and the real memory engine.
     /// Tests pass in throwaway copies.
+    @MainActor
     init(
         settings: AISettings = .shared,
         memoryStatus: MemoryStatus = MemoryEngine.shared.status,
         memoryActions: MemoryActions = .live,
         versions: VersionSettings = .shared,
         versionIndex: VersionIndex = SnapshotKeeper.shared.index,
-        versionActions: VersionActions = .live
+        versionActions: VersionActions = .live,
+        catalog: ModelCatalog? = nil,
+        connection: LLMProvider = AIRouter.shared
     ) {
         self.settings = settings
         self.memoryStatus = memoryStatus
@@ -37,6 +43,8 @@ struct SettingsView: View {
         self.versions = versions
         self.versionIndex = versionIndex
         self.versionActions = versionActions
+        self.catalog = catalog ?? .shared
+        self.connection = connection
     }
 
     @State private var keyDraft = ""
@@ -48,6 +56,8 @@ struct SettingsView: View {
     /// Set while asking "really rebuild?", to the number of entries it would send.
     @State private var rebuildCount: Int? = nil
     @State private var confirmingForget = false
+    /// Goes up each time the model list should be asked for again ("Check again", a new address).
+    @State private var refreshCount = 0
 
     // MARK: - Colours, matched to ContentView
 
@@ -64,7 +74,7 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 0) {
             aiSection
             Divider()
-            keySection
+            providerSection
             Divider()
             modelSection
             Divider()
@@ -82,6 +92,27 @@ struct SettingsView: View {
         .onDisappear {
             testTask?.cancel()
         }
+        // The model list is asked for whenever what it depends on changes, and never while AI is off.
+        .task(id: setupKey) {
+            await catalog.refresh(for: settings)
+        }
+        // A result from an earlier test says nothing about the settings as they are now.
+        .onChange(of: setupKey + "|" + settings.talkModel) { _, _ in
+            clearTest()
+        }
+    }
+
+    /// Changes whenever the service, its key, its address or AI itself changes.
+    private var setupKey: String {
+        "\(settings.aiEnabled)|\(settings.provider.rawValue)|\(settings.hasAPIKey)|\(AISettings.address(from: settings.otherBaseURL) != nil)|\(refreshCount)"
+    }
+
+    private func clearTest() {
+        testTask?.cancel()
+        testTask = nil
+        isTesting = false
+        testReply = ""
+        testNote = nil
     }
 
     // MARK: - AI on or off
@@ -96,7 +127,7 @@ struct SettingsView: View {
                 settings.aiEnabled.toggle()
             }
 
-            Text("Your entries and memory are stored only on this Mac, but when AI is on, talking and building memory send entry text to Claude through your API key; with AI off, nothing is sent anywhere.")
+            Text("Your entries and memory are stored only on this Mac. With AI off, nothing is sent anywhere.")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -105,10 +136,143 @@ struct SettingsView: View {
         .padding(.vertical, 12)
     }
 
-    // MARK: - API key
+    // MARK: - Which service
 
-    private var keySection: some View {
+    private var providerSection: some View {
         VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("Runs on")
+                    .font(.system(size: 13))
+                    .foregroundColor(quietColor)
+                    .frame(width: 110, alignment: .leading)
+                ForEach(Array(AIProviderKind.allCases.enumerated()), id: \.offset) { index, kind in
+                    if index > 0 {
+                        Text("•").foregroundColor(.gray)
+                    }
+                    // The chosen service is dark; the others are grey words.
+                    SettingsWordButton(
+                        title: kind.title,
+                        quietColor: settings.provider == kind ? strongColor : quietColor,
+                        strongColor: strongColor
+                    ) {
+                        choose(kind)
+                    }
+                }
+            }
+
+            Text(Self.description(of: settings.provider))
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            switch settings.provider {
+            case .local:
+                localStatus
+            case .openai, .claude:
+                keyRow
+            case .other:
+                addressRow
+                keyRow
+            }
+
+            if let keyNote {
+                Text(keyNote)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+
+            if settings.aiEnabled, let missing = missingLine(for: [.key, .address]) {
+                Text(missing)
+                    .font(.system(size: 13))
+                    .foregroundColor(bodyColor)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    static func description(of kind: AIProviderKind) -> String {
+        switch kind {
+        case .local:
+            return "A free open model that runs on this Mac through Ollama. Nothing you write leaves this Mac."
+        case .openai:
+            return "OpenAI, through your own API key. Entry text is sent to OpenAI when you talk or build memory. A ChatGPT plan does not include this."
+        case .claude:
+            return "Claude, through your own API key from Anthropic. Entry text is sent to Anthropic when you talk or build memory."
+        case .other:
+            return "Any service that speaks the OpenAI chat format, at an address you give. Entry text is sent to that address when you talk or build memory."
+        }
+    }
+
+    private func choose(_ kind: AIProviderKind) {
+        guard settings.provider != kind else { return }
+        keyDraft = ""
+        keyNote = nil
+        catalog.clear()
+        settings.provider = kind
+    }
+
+    /// One plain line saying what is still needed, if it is one of the given things.
+    private func missingLine(for gaps: [AISetupGap]) -> String? {
+        guard let gap = settings.setupGap, gaps.contains(gap) else { return nil }
+        switch gap {
+        case .key:
+            return "Add a key to use Talk and Memory."
+        case .address:
+            return "Add an address to use Talk and Memory."
+        case .model:
+            return "Choose a model to use Talk and Memory."
+        }
+    }
+
+    // MARK: - On this Mac
+
+    @ViewBuilder
+    private var localStatus: some View {
+        if !settings.aiEnabled {
+            EmptyView()
+        } else {
+            switch catalog.state {
+            case .idle, .loading:
+                Text("Looking for Ollama…")
+                    .font(.system(size: 13))
+                    .foregroundColor(hintColor)
+            case .loaded(let models) where models.isEmpty:
+                Text("Ollama is running, but it has no models yet. Download one in the Ollama app, then check again.")
+                    .font(.system(size: 13))
+                    .foregroundColor(bodyColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                SettingsWordButton(title: "Check again", quietColor: quietColor, strongColor: strongColor) {
+                    refreshCount += 1
+                }
+            case .loaded(let models):
+                Text("Ollama is running. \(models.count) \(models.count == 1 ? "model" : "models") found.")
+                    .font(.system(size: 13))
+                    .foregroundColor(bodyColor)
+            case .failed(let error):
+                Text(error.userMessage(for: .local))
+                    .font(.system(size: 13))
+                    .foregroundColor(bodyColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    SettingsWordButton(title: "Check again", quietColor: quietColor, strongColor: strongColor) {
+                        refreshCount += 1
+                    }
+                    Text("•").foregroundColor(.gray)
+                    SettingsWordButton(title: "Get Ollama", quietColor: quietColor, strongColor: strongColor) {
+                        if let url = URL(string: "https://ollama.com/download") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - A key and an address
+
+    private var keyRow: some View {
+        Group {
             if settings.hasAPIKey {
                 HStack(spacing: 8) {
                     Text("API key saved in your Mac's Keychain")
@@ -125,7 +289,7 @@ struct SettingsView: View {
                     SecureField(
                         "API key",
                         text: $keyDraft,
-                        prompt: Text("Paste your Claude API key").foregroundColor(hintColor)
+                        prompt: Text(keyPrompt).foregroundColor(hintColor)
                     )
                         .textFieldStyle(.plain)
                         .font(.system(size: 13))
@@ -140,23 +304,37 @@ struct SettingsView: View {
                     )
                 }
             }
-
-            if let keyNote {
-                Text(keyNote)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+    }
+
+    private var keyPrompt: String {
+        settings.provider == .other
+            ? "API key, if the service needs one"
+            : "Paste your \(settings.provider.title) API key"
     }
 
     private func saveKey() {
         if settings.saveAPIKey(keyDraft) {
             keyDraft = ""
             keyNote = nil
+            refreshCount += 1
         } else {
             keyNote = "Couldn't save the key to your Keychain."
+        }
+    }
+
+    private var addressRow: some View {
+        HStack(spacing: 8) {
+            Text("Address")
+                .font(.system(size: 13))
+                .foregroundColor(quietColor)
+                .frame(width: 110, alignment: .leading)
+            TextField("Address", text: $settings.otherBaseURL, prompt: Text("http://localhost:1234/v1").foregroundColor(hintColor))
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .foregroundColor(bodyColor)
+                .autocorrectionDisabled()
+                .onSubmit { refreshCount += 1 }
         }
     }
 
@@ -164,25 +342,87 @@ struct SettingsView: View {
 
     private var modelSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            modelRow(label: "Talk model", text: $settings.talkModel, placeholder: AISettings.defaultTalkModel)
-            modelRow(label: "Memory model", text: $settings.digestModel, placeholder: AISettings.defaultDigestModel)
+            if typesModelNames {
+                typedModelRow(label: "Talk model", text: $settings.talkModel)
+                typedModelRow(label: "Memory model", text: $settings.digestModel)
+            } else {
+                ModelPickerRow(label: "Talk model", selection: $settings.talkModel, choices: catalog.choices, waiting: waitingForModels, isLight: isLight)
+                ModelPickerRow(label: "Memory model", selection: $settings.digestModel, choices: catalog.choices, waiting: waitingForModels, isLight: isLight)
+            }
 
-            Text("Use a model name from Anthropic's model list. Leave a field blank to use the default.")
+            Text(modelNote)
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if case .failed(let error) = catalog.state, settings.provider != .local, !typesModelNames {
+                Text(error.userMessage(for: settings.provider))
+                    .font(.system(size: 13))
+                    .foregroundColor(bodyColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                SettingsWordButton(title: "Check again", quietColor: quietColor, strongColor: strongColor) {
+                    refreshCount += 1
+                }
+            }
+
+            if settings.aiEnabled, waitingForModels == nil || typesModelNames, let missing = missingLine(for: [.model]) {
+                Text(missing)
+                    .font(.system(size: 13))
+                    .foregroundColor(bodyColor)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
     }
 
-    private func modelRow(label: String, text: Binding<String>, placeholder: String) -> some View {
+    /// What stands in for the list while a model cannot be picked, or nil when it can.
+    private var waitingForModels: String? {
+        guard settings.aiEnabled else { return "Turn AI on first" }
+        switch settings.setupGap {
+        case .key: return "Add a key first"
+        case .address: return "Add an address first"
+        default: break
+        }
+        switch catalog.state {
+        case .idle, .loading:
+            return "Loading models…"
+        case .failed:
+            return "Not available"
+        case .loaded(let models):
+            return models.isEmpty ? "No models found" : nil
+        }
+    }
+
+    /// "Other" services do not always list their models. When one does not, the name is typed.
+    private var typesModelNames: Bool {
+        guard settings.provider == .other, settings.aiEnabled, settings.setupGap != .address else { return false }
+        switch catalog.state {
+        // The service answered, but has no list to give.
+        case .failed(let error): return error == .modelNotFound || error == .unexpected
+        case .loaded(let models): return models.isEmpty
+        default: return false
+        }
+    }
+
+    private var modelNote: String {
+        if typesModelNames {
+            return "This service did not list its models, so type the model's name as the service writes it."
+        }
+        switch settings.provider {
+        case .local:
+            return "Chosen from the models installed in Ollama on this Mac."
+        default:
+            return "Chosen from the models \(settings.provider.serviceNameInline) offers."
+        }
+    }
+
+    private func typedModelRow(label: String, text: Binding<String>) -> some View {
         HStack(spacing: 8) {
             Text(label)
                 .font(.system(size: 13))
                 .foregroundColor(quietColor)
                 .frame(width: 110, alignment: .leading)
-            TextField(label, text: text, prompt: Text(placeholder).foregroundColor(hintColor))
+            TextField(label, text: text, prompt: Text("Model name").foregroundColor(hintColor))
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundColor(bodyColor)
@@ -204,7 +444,7 @@ struct SettingsView: View {
                 confirmingForget = false
             }
 
-            Text("When memory is on, each entry is sent to Claude once after you have finished with it, and what it learns is saved as notes in your memory folder. Talk works without it.")
+            Text("When memory is on, each entry is read once by the AI after you have finished with it, and what it learns is saved as notes in your memory folder. Talk works without it.")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -232,7 +472,7 @@ struct SettingsView: View {
 
             if let rebuildCount {
                 confirmation(
-                    "This sends \(rebuildCount) \(rebuildCount == 1 ? "entry" : "entries") to Claude and replaces what it has learned. Your fixes are kept.",
+                    "This has the AI read \(rebuildCount) \(rebuildCount == 1 ? "entry" : "entries") again and replaces what it has learned. Your fixes are kept.",
                     confirm: "Start rebuild",
                     onConfirm: {
                         self.rebuildCount = nil
@@ -262,7 +502,7 @@ struct SettingsView: View {
                             title: "Rebuild memory",
                             quietColor: quietColor,
                             strongColor: strongColor,
-                            isDisabled: !(settings.aiEnabled && settings.memoryEnabled && settings.hasAPIKey)
+                            isDisabled: !(settings.isReady && settings.memoryEnabled)
                         ) {
                             Task { @MainActor in
                                 rebuildCount = await memoryActions.countForRebuild()
@@ -274,7 +514,7 @@ struct SettingsView: View {
                         title: "Tidy memory now",
                         quietColor: quietColor,
                         strongColor: strongColor,
-                        isDisabled: memoryStatus.summary.isWorking || !(settings.aiEnabled && settings.memoryEnabled && settings.hasAPIKey)
+                        isDisabled: memoryStatus.summary.isWorking || !(settings.isReady && settings.memoryEnabled)
                     ) {
                         memoryActions.tidy()
                     }
@@ -333,7 +573,7 @@ struct SettingsView: View {
                 title: isTesting ? "Testing…" : "Test connection",
                 quietColor: quietColor,
                 strongColor: strongColor,
-                isDisabled: isTesting,
+                isDisabled: isTesting || !settings.isReady,
                 action: runTest
             )
 
@@ -405,6 +645,8 @@ struct SettingsView: View {
         testNote = nil
         isTesting = true
 
+        let kind = settings.provider
+        let connection = self.connection
         let request = LLMRequest(
             model: settings.resolvedTalkModel,
             system: Prompts.connectionTestSystem,
@@ -414,17 +656,17 @@ struct SettingsView: View {
 
         testTask = Task { @MainActor in
             do {
-                for try await piece in AnthropicProvider.shared.stream(request) {
+                for try await piece in connection.stream(request) {
                     testReply += piece
                 }
                 if testReply.isEmpty {
-                    testNote = "Claude answered with nothing. Try again."
+                    testNote = "\(kind.serviceName) answered with nothing. Try again."
                 }
             } catch is CancellationError {
                 // The window closed or a new test started. Nothing to show.
             } catch {
                 testReply = ""
-                testNote = ((error as? LLMError) ?? .unexpected).userMessage
+                testNote = ((error as? LLMError) ?? .unexpected).userMessage(for: kind)
             }
             isTesting = false
         }
@@ -474,6 +716,142 @@ struct MemoryActions {
         forget: {},
         openFolder: {}
     )
+}
+
+/// One "Talk model" or "Memory model" line: the chosen model's name, and a list to pick another from.
+struct ModelPickerRow: View {
+    let label: String
+    @Binding var selection: String
+    let choices: [AIModelChoice]
+    /// What to show while a model cannot be picked ("Add a key first"), or nil when the list is ready.
+    let waiting: String?
+    let isLight: Bool
+
+    @State private var isOpen = false
+    @State private var isHovering = false
+
+    private var quietColor: Color { isLight ? .gray : .gray.opacity(0.8) }
+    private var strongColor: Color { isLight ? .black : .white }
+    private var bodyColor: Color {
+        isLight ? Color(red: 0.20, green: 0.20, blue: 0.20) : Color(red: 0.9, green: 0.9, blue: 0.9)
+    }
+    private var hintColor: Color { isLight ? .gray.opacity(0.5) : .gray.opacity(0.6) }
+
+    /// The chosen model by the name the service gives it, or as saved if the service no longer lists it.
+    private var chosenName: String? {
+        let trimmed = selection.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return choices.first { $0.id == trimmed }?.name ?? trimmed
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundColor(quietColor)
+                .frame(width: 110, alignment: .leading)
+
+            if let waiting {
+                Text(chosenName ?? waiting)
+                    .font(.system(size: 13))
+                    .foregroundColor(hintColor)
+            } else {
+                Button {
+                    isOpen = true
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(chosenName ?? "Choose a model")
+                            .font(.system(size: 13))
+                            .foregroundColor(isHovering || isOpen ? strongColor : (chosenName == nil ? quietColor : bodyColor))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundColor(quietColor)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onHover { hovering in
+                    isHovering = hovering
+                    if hovering {
+                        NSCursor.pointingHand.push()
+                    } else {
+                        NSCursor.pop()
+                    }
+                }
+                .popover(isPresented: $isOpen, attachmentAnchor: .point(UnitPoint(x: 0.5, y: 1)), arrowEdge: .bottom) {
+                    ModelList(choices: choices, selected: selection, isLight: isLight) { id in
+                        selection = id
+                        isOpen = false
+                    }
+                }
+            }
+            Spacer()
+        }
+    }
+}
+
+/// The list that opens under a model's name, in the style of freewrite's Chat pop-up.
+struct ModelList: View {
+    let choices: [AIModelChoice]
+    let selected: String
+    let isLight: Bool
+    let onPick: (String) -> Void
+
+    private var textColor: Color { isLight ? .primary : .white }
+
+    var body: some View {
+        let rows = VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(choices.enumerated()), id: \.element.id) { index, choice in
+                if index > 0 {
+                    Divider()
+                }
+                Button {
+                    onPick(choice.id)
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(choice.name)
+                            .font(.system(size: 13))
+                        if let detail = choice.detail {
+                            Text(detail)
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer(minLength: 12)
+                        if choice.id == selected {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(textColor)
+                .onHover { hovering in
+                    if hovering {
+                        NSCursor.pointingHand.push()
+                    } else {
+                        NSCursor.pop()
+                    }
+                }
+            }
+        }
+
+        // A long list (OpenAI offers dozens) scrolls rather than growing past the window.
+        Group {
+            if choices.count > 9 {
+                ScrollView { rows }
+                    .frame(height: 300)
+            } else {
+                rows
+            }
+        }
+        .frame(width: 240)
+        .background(isLight ? Color(NSColor.controlBackgroundColor) : Color(NSColor.darkGray))
+    }
 }
 
 /// A word you can click, in the same style as freewrite's bottom bar:

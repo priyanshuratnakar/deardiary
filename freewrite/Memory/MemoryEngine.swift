@@ -74,6 +74,8 @@ struct MemoryEnvironment {
     var store: MemoryStore
     var journal: JournalReader
     var provider: () -> LLMProvider
+    /// Which service is in use, so a problem can be reported in its name.
+    var service: () -> AIProviderKind = { .claude }
     var now: () -> Date
     var defaults: UserDefaults
     var limits = MemoryLimits()
@@ -86,7 +88,8 @@ struct MemoryEnvironment {
             model: { settings.savedDigestModel() },
             store: MemoryStore(),
             journal: JournalReader(),
-            provider: { AnthropicProvider.shared },
+            provider: { AIRouter.shared },
+            service: { settings.savedProvider() },
             now: { Date() },
             defaults: .standard
         )
@@ -306,7 +309,7 @@ actor MemoryEngine {
         } catch let error as LLMError where error != .refused && error != .truncated {
             // No network, busy, a bad key: say so quietly and try again another time.
             if error != .aiOff && error != .missingKey {
-                summary.problem = error.userMessage
+                summary.problem = error.userMessage(for: env.service())
                 pausedUntil = now.addingTimeInterval(env.limits.retryGap)
             }
             summary.isWorking = false
@@ -515,13 +518,13 @@ actor MemoryEngine {
                 // The answer was not usable. Leave this entry until its text changes or memory is rebuilt.
                 unusableBecause = error.reason
             } catch LLMError.refused {
-                unusableBecause = LLMError.refused.userMessage
+                unusableBecause = LLMError.refused.userMessage(for: env.service())
             } catch LLMError.truncated {
-                unusableBecause = LLMError.truncated.userMessage
+                unusableBecause = LLMError.truncated.userMessage(for: env.service())
             } catch let error as LLMError {
                 // Anything else (no network, busy, a bad key) stops this pass. It is tried again later.
                 if error != .aiOff && error != .missingKey {
-                    summary.problem = error.userMessage
+                    summary.problem = error.userMessage(for: env.service())
                     pausedUntil = env.now().addingTimeInterval(env.limits.retryGap)
                 }
                 break

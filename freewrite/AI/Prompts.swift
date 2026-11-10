@@ -173,7 +173,12 @@ enum Prompts {
 
     /// Shown in the talk column if the reply was declined even after a retry.
     /// It repeats the support options from the PRD, in case the entry was a hard one.
-    static let talkDeclinedNotice = "Claude declined to respond to this. If you are in danger or thinking about harming yourself, please reach someone you trust, Tele-MANAS on 14416 (India), or your local emergency services."
+    static let talkDeclinedNotice = talkDeclined(by: .claude)
+
+    /// The same notice, naming whichever service declined.
+    static func talkDeclined(by kind: AIProviderKind) -> String {
+        "\(kind.serviceName) declined to respond to this. If you are in danger or thinking about harming yourself, please reach someone you trust, Tele-MANAS on 14416 (India), or your local emergency services."
+    }
 
     // MARK: - Memory: digesting one entry
 

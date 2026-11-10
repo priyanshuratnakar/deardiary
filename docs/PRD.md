@@ -179,6 +179,25 @@ Each one ends with a build you can use. Nothing after M2 is needed for the app t
 | M6 | Fixes and upkeep | Rename, merge, delete and link survive a rebuild. The weekly consolidate pass runs. |
 | M7 | Versions and polish | Snapshots with restore, empty states, error messages, dark mode checked. |
 
+## Second round
+
+Added on 11 Nov 2026, after M0 to M7 were built and tried. Two things came out of that first try: without a Claude API key none of the new features could be seen at all, and the model names in Settings were typed text that a stray key press could break.
+
+What stays the same: the look. Dear Diary keeps freewrite's design and stands apart through what it does. A set of three alternative themes was mocked up and dropped.
+
+What changes:
+
+- **Any AI, including a free one.** Settings offers four services: a free open model running on this Mac through Ollama, OpenAI by API key, Claude by API key, or any other service that speaks the OpenAI chat format. A ChatGPT or Claude subscription cannot be used here: neither includes API use by another app.
+- **Models are picked, never typed.** The list comes from the chosen service.
+- **Settings says what is missing** in one plain line, and old results do not linger.
+- **Memory can be found.** The word "Memory" is always in the bottom bar. This is the one exception to principle 1: with AI off it shows one line on how to set memory up. Nothing is sent until AI is on.
+
+| # | Milestone | Done when |
+| --- | --- | --- |
+| M8 | Settings and any AI | You can choose a service, pick its models from a list, and see what is missing. Talk and memory work through whichever service is chosen. With AI off, the app still makes no network calls. |
+| M9 | Memory you can see | "Memory" is always in the bottom bar. Links curve, the selected thought's links pulse, one thought can be dragged onto another to link them, and a thought can be found by name. |
+| M10 | First run and moving in | A first run points to setting up AI. Entries from the original freewrite app can be brought across. |
+
 ## Open questions
 
 - [ ] **Name.** The doc uses "freewrite with a memory" as a placeholder. The fork needs its own name and bundle ID.
