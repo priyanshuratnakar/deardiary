@@ -25,10 +25,24 @@ enum AIAccess: Equatable {
 enum AILimits {
     /// The Settings "Test connection" reply only needs a sentence.
     static let connectionTestMaxTokens = 1024
+    /// Talk replies are short, but the model's private thinking counts towards
+    /// this limit too, so it is set generously. It is a ceiling, not a cost.
+    static let talkMaxTokens = 16_000
 }
 
 final class AISettings: ObservableObject {
-    static let shared = AISettings()
+    /// The app's settings. When the app is started by the test runner it gets a
+    /// throwaway copy, so tests never read the real preferences or the real key.
+    static let shared: AISettings = {
+        guard StorageRoot.isRunningTests() else {
+            return AISettings()
+        }
+        let suite = "deardiary.tests.host.\(UUID().uuidString)"
+        return AISettings(
+            defaults: UserDefaults(suiteName: suite) ?? .standard,
+            keychain: Keychain(service: "com.priyanshuratnakar.deardiary.tests.host.\(UUID().uuidString)", account: "test")
+        )
+    }()
 
     /// Defaults used until the user types a different model name in Settings.
     static let defaultTalkModel = "claude-opus-5-5"

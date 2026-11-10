@@ -21,21 +21,22 @@ final class StubURLProtocol: URLProtocol {
 
     private final class State: @unchecked Sendable {
         private let lock = NSLock()
-        private var stub = Stub()
+        private var stubs = [Stub()]
         private var seen: [URLRequest] = []
 
-        func install(_ newStub: Stub) {
+        func install(_ newStubs: [Stub]) {
             lock.lock()
-            stub = newStub
+            stubs = newStubs.isEmpty ? [Stub()] : newStubs
             seen = []
             lock.unlock()
         }
 
+        /// Answers with the canned replies in order; the last one repeats.
         func record(_ request: URLRequest) -> Stub {
             lock.lock()
             defer { lock.unlock() }
             seen.append(request)
-            return stub
+            return stubs.count > 1 ? stubs.removeFirst() : stubs[0]
         }
 
         var requests: [URLRequest] {
@@ -47,9 +48,9 @@ final class StubURLProtocol: URLProtocol {
 
     private static let state = State()
 
-    /// Sets the canned reply and forgets earlier requests.
-    static func install(_ stub: Stub) {
-        state.install(stub)
+    /// Sets the canned replies (used in order, the last one repeating) and forgets earlier requests.
+    static func install(_ stubs: Stub...) {
+        state.install(stubs)
     }
 
     /// Every request that tried to reach the network since the last `install`.

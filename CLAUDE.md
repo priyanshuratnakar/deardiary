@@ -31,7 +31,7 @@ New files (the project picks up anything under `freewrite/` automatically, no pr
 - `freewrite/AI/AnthropicProvider.swift`: Claude's Messages API over `URLSession` (no SDK). `POST https://api.anthropic.com/v1/messages` with headers `x-api-key`, `anthropic-version: 2026-10-21`, `content-type: application/json`. The body carries only `model`, `max_tokens`, `system`, `messages` and `stream`. It never sends `temperature`, `top_p` or `top_k` (this API version rejects them) and sends no `thinking` or `effort` settings, so each model runs with its own defaults and any model name typed in Settings works. `AnthropicStreamParser` reads the `data:` lines of the event stream, keeps `text_delta` text, and skips pings, thinking and unknown event types. A `stop_reason` of `refusal` becomes `LLMError.refused`.
 - `freewrite/AI/AISettings.swift`: AI on or off (default off), the talk model and the memory ("digest") model, stored in UserDefaults under `ai.enabled`, `ai.talkModel`, `ai.digestModel`. **Model IDs exist only here**, as defaults and settings. Never write a model ID into networking or feature logic.
 - `freewrite/AI/Keychain.swift`: the API key, stored as a generic password in the macOS Keychain (service `<bundle id>.anthropic-api-key`). It is never written to a file or to UserDefaults.
-- `freewrite/AI/Prompts.swift`: every prompt the app sends. Add talk, digest and consolidate prompts here, not next to the code that uses them.
+- `freewrite/AI/Prompts.swift`: every prompt the app sends. Add digest and consolidate prompts here, not next to the code that uses them.
 - `freewrite/Settings/SettingsView.swift`: the Settings window (AI on/off, API key, the two models, a Test connection button). It is opened from the app menu (Settings…, ⌘,) through a SwiftUI `Settings` scene in `freewriteApp.swift`.
 - `freewrite/Settings/StorageRoot.swift`: decides which folder the journal lives in (see below).
 
@@ -56,6 +56,49 @@ xcodebuild test -project freewrite.xcodeproj -scheme freewrite -only-testing:fre
 ```
 
 The unit tests start the app itself, which is why the storage root switches to a temporary folder under test. They never use the real network (`StubURLProtocol` in `freewriteTests/TestSupport.swift` answers every request), the real API key (a throwaway Keychain service) or the real preferences (a throwaway UserDefaults suite). `SettingsSnapshotTests` draws the Settings window off screen and attaches a picture to the test results. The UI test target is freewrite's and is not part of this command.
+
+### M2: talk mode
+
+Talk is a conversation column that opens beside the page when the user clicks "Talk" in the bottom bar. It is off by default, and no request is made while it is off.
+
+New files:
+
+- `freewrite/Talk/TalkController.swift`: `TalkController` (is talk available, is it on, building requests, saving), `TalkTranscript` (what the column shows) and `TalkEntry` (the entry being read).
+- `freewrite/Talk/TalkView.swift`: `TalkView` (what `ContentView` hosts), `TalkColumn` (the conversation and input), `TalkWordButton` (the bottom-bar word), `TalkStyle` and `BackspaceLockScope`.
+- `freewrite/Talk/ConversationStore.swift`: `TalkMessage` and the markdown file format.
+- `freewrite/AI/Prompts.swift` now holds the talk voice and safety behaviour (`talkVoice`, `talkSystem`, `talkOpener`, `talkDeclinedNotice`), written from the PRD's "Privacy and care" section.
+
+Rules the code follows (keep them when changing it):
+
+- **When Talk shows.** Only when AI is on and a key is saved (`TalkController.isAvailable`) and a text entry is open. Otherwise freewrite's "Chat" button is shown, unchanged. Video entries always keep "Chat".
+- **When talk speaks first.** Once, at the moment it is switched on, and only if the page has writing and that entry has no saved conversation. Showing a different entry while talk is on never sends anything by itself.
+- **What is sent.** Each request is `Prompts.talkSystem` (the voice plus the entry as it reads at that moment, between `<entry>` markers) and the conversation so far. In M2 talk knows only the open entry; memory of other days comes in M4.
+- **Off means off.** Switching talk off, switching AI off in Settings, or removing the key cancels any reply in progress and drops the partial text. A cancelled request that has not started yet is never sent.
+- **Storage.** One file per entry at `conversations/[ENTRY-UUID].md` inside the journal folder: a `# Talk` title, then `## You · yyyy-MM-dd HH:mm:ss` and `## Dear Diary · …` headings, each followed by the text. It is plain markdown and can be edited or deleted by hand. Deleting an entry deletes its conversation.
+- **Declined replies.** Talk requests set `retryIfDeclined`, which makes `AnthropicProvider` send `fallbacks: "default"` with the header `anthropic-beta: server-side-fallback-2026-07-01`; Anthropic then retries a declined request on a model it chooses. If a model rejects that option (HTTP 400), the provider asks again without it and remembers for the rest of the run. If the reply is still declined, the column shows `Prompts.talkDeclinedNotice`, which repeats the PRD's support options.
+- **Failure is quiet.** Errors appear as one plain sentence in the column, with a "Try again" word. They never interrupt the page.
+
+Performance notes:
+
+- `ContentView` observes `TalkController`, which only publishes `isAvailable` and `isOn`. The fast-changing state lives in `TalkTranscript`, which only `TalkColumn` observes, so a streaming reply does not redraw the page.
+- `TalkView` hands the page text to the controller through `onChange` without redrawing the conversation.
+
+Changes in `ContentView.swift` (all marked with a "Dear Diary" comment):
+
+1. One `@StateObject` line for `TalkController`.
+2. The backspace check also asks `BackspaceLockScope.applies(to:)`, so "Backspace is Off" still locks the page but no longer blocks deleting in the talk box or in Settings fields.
+3. An `if`/`else` around the "Chat" button. **The Chat code inside the `else` is deliberately not re-indented**, so it still matches upstream freewrite line for line. Do not reformat it.
+4. The talk column, placed between the page and the history sidebar (340pt wide).
+5. One line in `deleteEntry` so the entry's conversation is deleted too.
+
+Tests added: `ConversationStoreTests`, `TalkControllerTests` (with `TalkPromptTests` and `BackspaceLockScopeTests`), more `AnthropicProviderTests`, and two picture tests, `TalkSnapshotTests` and `PageSnapshotTests`. `FakeProvider` in `freewriteTests/TalkTestSupport.swift` is a pretend AI that answers from a script. To look at the pictures after a test run:
+
+```bash
+xcodebuild test -project freewrite.xcodeproj -scheme freewrite -only-testing:freewriteTests -resultBundlePath /tmp/deardiary.xcresult
+xcrun xcresulttool export attachments --path /tmp/deardiary.xcresult --output-path /tmp/deardiary-pictures
+```
+
+Under test, `AISettings.shared` is a throwaway copy, so tests never read the real preferences or key.
 
 ## Product Vision & User Experience
 

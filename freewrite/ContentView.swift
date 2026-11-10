@@ -137,6 +137,7 @@ struct ContentView: View {
     @State private var showingVideoPermissionPopover = false
     @State private var videoPermissionPopoverItems: [VideoPermissionPopoverItem] = []
     @State private var videoPermissionPopoverFallbackMessage: String? = nil
+    @StateObject private var talk = TalkController() // Dear Diary: talk mode
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     let entryHeight: CGFloat = 40
     
@@ -904,7 +905,7 @@ struct ContentView: View {
                         // Add keyboard monitor for backspace/delete keys
                         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                             // Check if backspace is disabled and the key is delete/backspace
-                            if backspaceDisabled && (event.keyCode == 51 || event.keyCode == 117) {
+                            if backspaceDisabled && BackspaceLockScope.applies(to: event) && (event.keyCode == 51 || event.keyCode == 117) {
                                 // Block the backspace/delete key
                                 return nil
                             }
@@ -1215,6 +1216,12 @@ struct ContentView: View {
                             Text("•")
                                 .foregroundColor(.gray)
 
+                            // Dear Diary: Talk takes Chat's place when AI is on, a key is saved and a
+                            // text entry is open. freewrite's Chat code below is unchanged, and is
+                            // deliberately not re-indented so it still matches upstream line for line.
+                            if talk.isAvailable && !isViewingVideoEntry {
+                                TalkWordButton(talk: talk, textColor: textColor, textHoverColor: textHoverColor, isHoveringBottomNav: $isHoveringBottomNav)
+                            } else {
                             Button("Chat") {
                                 showingChatMenu = true
                                 // Ensure didCopyPrompt is reset when opening the menu
@@ -1368,6 +1375,7 @@ struct ContentView: View {
                                     }
                                 }
                             }
+                            } // Dear Diary: end of the Chat branch
                             
                             Text("•")
                                 .foregroundColor(.gray)
@@ -1503,6 +1511,22 @@ struct ContentView: View {
                 }
             }
             
+            // Dear Diary: the talk column, beside the page.
+            if talk.isOn && talk.isAvailable && !isViewingVideoEntry {
+                Divider()
+
+                TalkView(
+                    talk: talk,
+                    entryID: selectedEntryId,
+                    entryFilename: entries.first(where: { $0.id == selectedEntryId })?.filename,
+                    entryText: text,
+                    fontName: selectedFont,
+                    fontSize: fontSize,
+                    colorScheme: colorScheme
+                )
+                .frame(width: 340)
+            }
+
             // Right sidebar
             if showingSidebar {
                 Divider()
@@ -2021,6 +2045,7 @@ struct ContentView: View {
         do {
             try fileManager.removeItem(at: fileURL)
             print("Successfully deleted file: \(entry.filename)")
+            talk.entryDeleted(entry.id) // Dear Diary: the entry's talk conversation goes with it
 
             // If this is a video entry, also delete the video file
             if let videoFilename = resolvedVideoFilename(for: entry) {

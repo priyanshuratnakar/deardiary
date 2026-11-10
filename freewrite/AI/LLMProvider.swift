@@ -28,6 +28,9 @@ struct LLMRequest {
     var messages: [LLMMessage]
     /// The most the model may write in its reply.
     var maxTokens: Int
+    /// If the model's safety checks decline the request, ask the service to try
+    /// once more on another of its models before giving up.
+    var retryIfDeclined: Bool = false
 }
 
 protocol LLMProvider {

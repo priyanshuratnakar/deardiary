@@ -11,7 +11,8 @@
 //  2. Nothing is logged. Not the key, not the request, not the reply.
 //
 //  API details were checked against https://docs.claude.com on 10 Nov 2026:
-//  endpoint, headers, API version, streaming event format and error shapes.
+//  endpoint, headers, API version, streaming event format, error shapes, and
+//  how declined replies and the server-side retry ("fallbacks") behave.
 //
 
 import Foundation
@@ -20,11 +21,21 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
     static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
     static let apiVersion = "2026-10-21"
 
+    /// Turns on Anthropic's server-side retry: if a model's safety checks decline a
+    /// request, the service runs it again on the model it recommends instead.
+    /// The app never names that other model; the service chooses it.
+    static let declineRetryBeta = "server-side-fallback-2026-07-01"
+
     /// The provider the app uses. It is created the first time something asks for it.
     static let shared = AnthropicProvider(access: { AISettings.shared.access() })
 
     private let access: () -> AIAccess
     private let session: URLSession
+
+    /// Models that turned out not to accept the retry option, remembered until the app quits
+    /// so later requests skip it straight away.
+    private let lock = NSLock()
+    private var modelsWithoutDeclineRetry: Set<String> = []
 
     init(access: @escaping () -> AIAccess, session: URLSession = AnthropicProvider.makeSession()) {
         self.access = access
@@ -48,12 +59,19 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let urlRequest = try self.authorizedRequest(for: request, stream: true)
-                    let (bytes, response) = try await self.session.bytes(for: urlRequest)
+                    var useRetry = self.shouldUseDeclineRetry(for: request)
+                    var (bytes, http) = try await self.openStream(for: request, declineRetry: useRetry)
 
-                    guard let http = response as? HTTPURLResponse else {
-                        throw LLMError.unexpected
+                    // A model that does not accept the retry option rejects the whole request.
+                    // Ask once more without it, and remember if that was the cause.
+                    if useRetry, http.statusCode == 400 {
+                        useRetry = false
+                        (bytes, http) = try await self.openStream(for: request, declineRetry: false)
+                        if (200..<300).contains(http.statusCode) {
+                            self.rememberNoDeclineRetry(for: request.model)
+                        }
                     }
+
                     guard (200..<300).contains(http.statusCode) else {
                         var body = Data()
                         for try await byte in bytes {
@@ -92,12 +110,16 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
 
     func complete(_ request: LLMRequest) async throws -> String {
         do {
-            let urlRequest = try authorizedRequest(for: request, stream: false)
-            let (data, response) = try await session.data(for: urlRequest)
+            let useRetry = shouldUseDeclineRetry(for: request)
+            var (data, http) = try await send(request, declineRetry: useRetry)
 
-            guard let http = response as? HTTPURLResponse else {
-                throw LLMError.unexpected
+            if useRetry, http.statusCode == 400 {
+                (data, http) = try await send(request, declineRetry: false)
+                if (200..<300).contains(http.statusCode) {
+                    rememberNoDeclineRetry(for: request.model)
+                }
             }
+
             guard (200..<300).contains(http.statusCode) else {
                 throw Self.error(forStatus: http.statusCode, body: data)
             }
@@ -118,27 +140,46 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
         }
     }
 
-    // MARK: - Building the request
+    // MARK: - Sending
+
+    private func openStream(for request: LLMRequest, declineRetry: Bool) async throws -> (URLSession.AsyncBytes, HTTPURLResponse) {
+        let urlRequest = try authorizedRequest(for: request, stream: true, declineRetry: declineRetry)
+        let (bytes, response) = try await session.bytes(for: urlRequest)
+        guard let http = response as? HTTPURLResponse else {
+            throw LLMError.unexpected
+        }
+        return (bytes, http)
+    }
+
+    private func send(_ request: LLMRequest, declineRetry: Bool) async throws -> (Data, HTTPURLResponse) {
+        let urlRequest = try authorizedRequest(for: request, stream: false, declineRetry: declineRetry)
+        let (data, response) = try await session.data(for: urlRequest)
+        guard let http = response as? HTTPURLResponse else {
+            throw LLMError.unexpected
+        }
+        return (data, http)
+    }
 
     /// The gate. Throws before anything touches the network when AI is off or there is no key.
-    private func authorizedRequest(for request: LLMRequest, stream: Bool) throws -> URLRequest {
+    private func authorizedRequest(for request: LLMRequest, stream: Bool, declineRetry: Bool) throws -> URLRequest {
         switch access() {
         case .off:
             throw LLMError.aiOff
         case .noKey:
             throw LLMError.missingKey
         case .allowed(let apiKey):
-            return try Self.makeURLRequest(for: request, apiKey: apiKey, stream: stream)
+            return try Self.makeURLRequest(for: request, apiKey: apiKey, stream: stream, declineRetry: declineRetry)
         }
     }
 
-    static func makeURLRequest(for request: LLMRequest, apiKey: String, stream: Bool) throws -> URLRequest {
+    static func makeURLRequest(for request: LLMRequest, apiKey: String, stream: Bool, declineRetry: Bool = false) throws -> URLRequest {
         let body = RequestBody(
             model: request.model,
             max_tokens: request.maxTokens,
             system: (request.system?.isEmpty ?? true) ? nil : request.system,
             messages: request.messages.map { RequestBody.Message(role: $0.role.rawValue, content: $0.text) },
-            stream: stream ? true : nil
+            stream: stream ? true : nil,
+            fallbacks: declineRetry ? "default" : nil
         )
 
         var urlRequest = URLRequest(url: endpoint)
@@ -146,8 +187,26 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
         urlRequest.setValue("application/json", forHTTPHeaderField: "content-type")
         urlRequest.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         urlRequest.setValue(apiVersion, forHTTPHeaderField: "anthropic-version")
+        if declineRetry {
+            urlRequest.setValue(declineRetryBeta, forHTTPHeaderField: "anthropic-beta")
+        }
         urlRequest.httpBody = try JSONEncoder().encode(body)
         return urlRequest
+    }
+
+    // MARK: - Retry-on-decline bookkeeping
+
+    private func shouldUseDeclineRetry(for request: LLMRequest) -> Bool {
+        guard request.retryIfDeclined else { return false }
+        lock.lock()
+        defer { lock.unlock() }
+        return !modelsWithoutDeclineRetry.contains(request.model)
+    }
+
+    private func rememberNoDeclineRetry(for model: String) {
+        lock.lock()
+        modelsWithoutDeclineRetry.insert(model)
+        lock.unlock()
     }
 
     // MARK: - Turning failures into plain errors
@@ -226,6 +285,7 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
         let system: String?
         let messages: [Message]
         let stream: Bool?
+        let fallbacks: String?
     }
 
     private struct MessageResponse: Decodable {
@@ -260,8 +320,9 @@ enum AnthropicStreamEvent: Equatable {
     case failed(errorType: String)
     /// The reply is complete.
     case finished
-    /// Anything else: keep-alive pings, thinking, event names, and event types
-    /// added in future. These are skipped on purpose.
+    /// Anything else: keep-alive pings, thinking, event names, the marker left when
+    /// another model takes over after a decline, and event types added in future.
+    /// These are skipped on purpose.
     case ignored
 }
 
