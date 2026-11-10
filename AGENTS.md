@@ -12,7 +12,7 @@
 
 This repo is **Dear Diary**, a personal fork of freewrite that adds an AI talk mode, a local AI-built memory and a map of that memory. The spec is `docs/PRD.md` and is the source of truth for the fork. Everything below this section describes the original freewrite code, which the fork keeps and builds around. Where this document and the code disagree, trust the code.
 
-What the fork has changed so far (M0: rename only, no behaviour change):
+### M0: renamed, no behaviour change
 
 - **App name**: the built app is `Dear Diary.app` (`PRODUCT_NAME = "Dear Diary"`). The Xcode project, target, scheme, source folder and Swift module are all still called `freewrite` (`PRODUCT_MODULE_NAME = freewrite`), so the build command below is unchanged and upstream changes stay easy to pull in.
 - **Bundle ID**: `com.priyanshuratnakar.deardiary` (test targets: `com.priyanshuratnakar.deardiaryTests` and `com.priyanshuratnakar.deardiaryUITests`).
@@ -20,6 +20,42 @@ What the fork has changed so far (M0: rename only, no behaviour change):
 - **Where data really lives**: the app is sandboxed, so `Documents/Freewrite/` resolves to `~/Library/Containers/com.priyanshuratnakar.deardiary/Data/Documents/Freewrite/`. That is a different folder from the original freewrite app's container (`app.humansongs.freewrite`), so the two apps do not see each other's entries. The folder name `Freewrite` and the entry filename format are unchanged.
 - **Permission prompts** (camera, microphone, speech recognition) say "Dear Diary" instead of "Freewrite".
 - `LICENSE` (MIT, Farza's copyright notice) is kept as is.
+
+### M1: AI plumbing
+
+With AI off (the default) the app still behaves exactly like freewrite and makes no network requests. Nothing was added to the writing page.
+
+New files (the project picks up anything under `freewrite/` automatically, no project edits needed):
+
+- `freewrite/AI/LLMProvider.swift`: the provider-neutral interface. `stream(_:)` returns the reply piece by piece, `complete(_:)` returns it whole. Also `LLMRequest`, `LLMMessage` and `LLMError`, whose `userMessage` is the plain sentence shown to the user.
+- `freewrite/AI/AnthropicProvider.swift`: Claude's Messages API over `URLSession` (no SDK). `POST https://api.anthropic.com/v1/messages` with headers `x-api-key`, `anthropic-version: 2026-10-21`, `content-type: application/json`. The body carries only `model`, `max_tokens`, `system`, `messages` and `stream`. It never sends `temperature`, `top_p` or `top_k` (this API version rejects them) and sends no `thinking` or `effort` settings, so each model runs with its own defaults and any model name typed in Settings works. `AnthropicStreamParser` reads the `data:` lines of the event stream, keeps `text_delta` text, and skips pings, thinking and unknown event types. A `stop_reason` of `refusal` becomes `LLMError.refused`.
+- `freewrite/AI/AISettings.swift`: AI on or off (default off), the talk model and the memory ("digest") model, stored in UserDefaults under `ai.enabled`, `ai.talkModel`, `ai.digestModel`. **Model IDs exist only here**, as defaults and settings. Never write a model ID into networking or feature logic.
+- `freewrite/AI/Keychain.swift`: the API key, stored as a generic password in the macOS Keychain (service `<bundle id>.anthropic-api-key`). It is never written to a file or to UserDefaults.
+- `freewrite/AI/Prompts.swift`: every prompt the app sends. Add talk, digest and consolidate prompts here, not next to the code that uses them.
+- `freewrite/Settings/SettingsView.swift`: the Settings window (AI on/off, API key, the two models, a Test connection button). It is opened from the app menu (Settings…, ⌘,) through a SwiftUI `Settings` scene in `freewriteApp.swift`.
+- `freewrite/Settings/StorageRoot.swift`: decides which folder the journal lives in (see below).
+
+**The network gate.** Every request goes through `AnthropicProvider.authorizedRequest`, which calls `AISettings.access()` first. If AI is off or there is no key, it throws `LLMError.aiOff` or `.missingKey` before `URLSession` is touched. All AI networking must go through `AnthropicProvider`; do not create another `URLSession` anywhere else.
+
+**Privacy rules for new code.** Never log entry text, memory content, prompts, replies or the API key, including in debug `print`s. The AI and Settings files contain no `print` calls; keep it that way.
+
+**Storage root.** `ContentView` no longer builds the journal path itself; it reads `StorageRoot.url` (the only change made to `ContentView.swift` in M1). The folder is chosen once at launch:
+
+1. If the environment variable `DEARDIARY_STORAGE_ROOT` is set, that folder is used. The app is sandboxed, so it must be inside the app's container, for example `~/Library/Containers/com.priyanshuratnakar.deardiary/Data/tmp/dev-journal`.
+2. If the app was started by Xcode's test runner, a fresh folder under the temporary directory is used.
+3. Otherwise `Documents/Freewrite`, as before.
+
+Agents: never run or test against the owner's real journal. Launch development builds with `DEARDIARY_STORAGE_ROOT` set, and use made-up entries. macOS also blocks other processes from reading the app's container, so check storage through the app's own console output rather than by listing the folder.
+
+**Entitlement added:** `com.apple.security.network.client` (outgoing connections), and nothing else.
+
+**Tests.** Run them with:
+
+```bash
+xcodebuild test -project freewrite.xcodeproj -scheme freewrite -only-testing:freewriteTests
+```
+
+The unit tests start the app itself, which is why the storage root switches to a temporary folder under test. They never use the real network (`StubURLProtocol` in `freewriteTests/TestSupport.swift` answers every request), the real API key (a throwaway Keychain service) or the real preferences (a throwaway UserDefaults suite). `SettingsSnapshotTests` draws the Settings window off screen and attaches a picture to the test results. The UI test target is freewrite's and is not part of this command.
 
 ## Product Vision & User Experience
 
@@ -343,6 +379,8 @@ Required entitlements in `freewrite.entitlements`:
 <key>com.apple.security.device.audio-input</key>
 <true/>
 <key>com.apple.security.personal-information.speech-recognition</key>
+<true/>
+<key>com.apple.security.network.client</key>
 <true/>
 ```
 

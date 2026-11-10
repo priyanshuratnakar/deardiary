@@ -160,7 +160,7 @@ struct ContentView: View {
     
     // Add cached documents directory
     private let documentsDirectory: URL = {
-        let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Freewrite")
+        let directory = StorageRoot.url
         
         // Create Freewrite directory if it doesn't exist
         if !FileManager.default.fileExists(atPath: directory.path) {
@@ -176,8 +176,7 @@ struct ContentView: View {
     }()
 
     private let videosDirectory: URL = {
-        let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Freewrite")
+        let directory = StorageRoot.url
             .appendingPathComponent("Videos")
 
         if !FileManager.default.fileExists(atPath: directory.path) {

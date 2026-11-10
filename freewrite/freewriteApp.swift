@@ -29,6 +29,12 @@ struct freewriteApp: App {
         .defaultSize(width: 1100, height: 600)
         .windowToolbarStyle(.unifiedCompact)
         .windowResizability(.contentSize)
+
+        // Dear Diary: the Settings window, opened from the app menu (Settings…, ⌘,).
+        Settings {
+            SettingsView()
+                .preferredColorScheme(colorSchemeString == "dark" ? .dark : .light)
+        }
     }
 }
 
