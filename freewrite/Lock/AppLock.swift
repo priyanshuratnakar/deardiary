@@ -51,6 +51,7 @@ final class AppLock: ObservableObject {
 
     enum Line {
         static let reasonToUnlock = "unlock your journal"
+        static let reasonToSwitchOn = "turn on the lock"
         static let reasonToSwitchOff = "turn off the lock"
         static let failed = "Couldn't check that it's you. Try again."
         static let unavailable = "The lock needs a password on this Mac. Set one in System Settings, then turn the lock on."
@@ -173,20 +174,35 @@ final class AppLock: ObservableObject {
 
     // MARK: - Settings
 
-    /// Turns the lock on or off. Turning it off asks macOS first, so only the owner can.
+    /// Turns the lock on or off. Both ask macOS first.
+    ///
+    /// Turning it off asks so that only the Mac's owner can. Turning it on asks so that the
+    /// check is seen to work, on this Mac, before the lock can ever close: if the sheet does
+    /// not appear or does not pass, the lock stays off and nobody is locked out.
     func setEnabled(_ on: Bool) async {
-        guard on != settings.enabled else { return }
+        guard on != settings.enabled, !isAsking else { return }
         if on {
             guard authenticator.isAvailable() else {
                 problem = Line.unavailable
                 return
             }
-            problem = nil
-            settings.enabled = true
+            isAsking = true
+            let result = await authenticator.authenticate(reason: Line.reasonToSwitchOn)
+            isAsking = false
+            switch result {
+            case .allowed:
+                problem = nil
+                settings.enabled = true
+            case .cancelled:
+                break
+            case .failed:
+                problem = Line.failed
+            case .unavailable:
+                problem = Line.unavailable
+            }
             return
         }
 
-        guard !isAsking else { return }
         isAsking = true
         let result = await authenticator.authenticate(reason: Line.reasonToSwitchOff)
         isAsking = false

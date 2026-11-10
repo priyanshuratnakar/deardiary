@@ -160,10 +160,11 @@ Files: `freewrite/Lock/LockScreen.swift` (the locked window), `freewrite/Lock/Ap
 | On the locked window | for your eyes only |
 | The word under it | Unlock |
 | In the sheet macOS shows to open it | Dear Diary is trying to unlock your journal. |
+| In the sheet macOS shows to turn the lock on | Dear Diary is trying to turn on the lock. |
 | In the sheet macOS shows to turn the lock off | Dear Diary is trying to turn off the lock. |
 | The check did not pass | Couldn't check that it's you. Try again. |
 | This Mac has no password | The lock needs a password on this Mac. Set one in System Settings, then turn the lock on. |
-| In Settings, under the switch | When the lock is on, Dear Diary opens locked and asks for Touch ID or your Mac password. It locks again when your Mac sleeps and when it has been in the background for a while. |
+| In Settings, under the switch | When the lock is on, Dear Diary opens locked and asks for Touch ID or your Mac password. It locks again when your Mac sleeps and when it has been in the background for a while. Turning it on or off asks once too. |
 | In Settings, while the lock is on | Lock now · Lock after 5 minutes (each click: 15 minutes, 30 minutes, 1 minute, then 5 again) |
 | In Settings, while the lock is on | The lock covers Dear Diary's windows. Your entries stay plain files in your journal folder, protected by your Mac's own login. |
 

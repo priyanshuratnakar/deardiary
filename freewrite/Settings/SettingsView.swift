@@ -25,6 +25,8 @@ struct SettingsView: View {
     @ObservedObject private var journalImport: JournalImport
     @ObservedObject private var lock: AppLock
     @ObservedObject private var lockSettings: LockSettings
+    /// The tallest the window's content may be. Past this it scrolls.
+    private let tallestAllowed: CGFloat
     @AppStorage("colorScheme") private var colorSchemeString: String = "light"
 
     /// The app always uses the shared settings and the real memory engine.
@@ -40,7 +42,8 @@ struct SettingsView: View {
         catalog: ModelCatalog? = nil,
         connection: LLMProvider = AIRouter.shared,
         journalImport: JournalImport? = nil,
-        lock: AppLock? = nil
+        lock: AppLock? = nil,
+        tallestAllowed: CGFloat? = nil
     ) {
         self.settings = settings
         self.memoryStatus = memoryStatus
@@ -54,6 +57,7 @@ struct SettingsView: View {
         let lock = lock ?? .shared
         self.lock = lock
         self.lockSettings = lock.settings
+        self.tallestAllowed = tallestAllowed ?? Self.tallestThatFits(screenHeight: NSScreen.main?.visibleFrame.height)
     }
 
     @State private var keyDraft = ""
@@ -79,7 +83,40 @@ struct SettingsView: View {
     private var backgroundColor: Color { isLight ? .white : .black }
     private var hintColor: Color { isLight ? .gray.opacity(0.5) : .gray.opacity(0.6) }
 
+    /// How tall Settings may grow on a screen with this much room (menu bar and Dock already
+    /// taken off), leaving space for the window's own title bar.
+    static func tallestThatFits(screenHeight: CGFloat?) -> CGFloat {
+        max(320, (screenHeight ?? 800) - 44)
+    }
+
     var body: some View {
+        // With everything switched on, Settings can be taller than a laptop screen, and its
+        // window cannot be resized. So it is shown whole when it fits and scrolls when it does not.
+        ViewThatFits(in: .vertical) {
+            sections
+            ScrollView(.vertical) {
+                sections
+            }
+        }
+        .frame(maxHeight: tallestAllowed)
+        .background(backgroundColor)
+        .onAppear {
+            memoryActions.refresh()
+        }
+        .onDisappear {
+            testTask?.cancel()
+        }
+        // The model list is asked for whenever what it depends on changes, and never while AI is off.
+        .task(id: setupKey) {
+            await catalog.refresh(for: settings)
+        }
+        // A result from an earlier test says nothing about the settings as they are now.
+        .onChange(of: setupKey + "|" + settings.talkModel) { _, _ in
+            clearTest()
+        }
+    }
+
+    private var sections: some View {
         VStack(alignment: .leading, spacing: 0) {
             aiSection
             Divider()
@@ -98,21 +135,6 @@ struct SettingsView: View {
             movingInSection
         }
         .frame(width: 440)
-        .background(backgroundColor)
-        .onAppear {
-            memoryActions.refresh()
-        }
-        .onDisappear {
-            testTask?.cancel()
-        }
-        // The model list is asked for whenever what it depends on changes, and never while AI is off.
-        .task(id: setupKey) {
-            await catalog.refresh(for: settings)
-        }
-        // A result from an earlier test says nothing about the settings as they are now.
-        .onChange(of: setupKey + "|" + settings.talkModel) { _, _ in
-            clearTest()
-        }
     }
 
     /// Changes whenever the service, its key, its address or AI itself changes.
@@ -661,11 +683,11 @@ struct SettingsView: View {
                 strongColor: strongColor,
                 isDisabled: lock.isAsking
             ) {
-                // Turning it off asks macOS first, so only the Mac's owner can.
+                // Both ways ask macOS first: on, so it is seen to work; off, so only the Mac's owner can.
                 Task { await lock.setEnabled(!lockSettings.enabled) }
             }
 
-            Text("When the lock is on, Dear Diary opens locked and asks for Touch ID or your Mac password. It locks again when your Mac sleeps and when it has been in the background for a while.")
+            Text("When the lock is on, Dear Diary opens locked and asks for Touch ID or your Mac password. It locks again when your Mac sleeps and when it has been in the background for a while. Turning it on or off asks once too.")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

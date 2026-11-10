@@ -181,6 +181,45 @@ final class SettingsSnapshotTests: XCTestCase {
     // MARK: - The lock
 
     @MainActor
+    func testSettingsScrollsRatherThanRunOffASmallScreen() throws {
+        // Everything switched on, on a screen with room for 600 points.
+        let image = try snapshot(named: "settings-light-scrolls-on-a-small-screen", dark: false, tallest: 600) { parts in
+            parts.settings.aiEnabled = true
+            parts.settings.provider = .local
+            parts.settings.talkModel = "llama-test"
+            parts.settings.digestModel = "llama-test"
+            parts.settings.memoryEnabled = true
+            parts.versions.enabled = true
+            parts.lock.settings.enabled = true
+            parts.catalog.show(.loaded(Self.localModels))
+            parts.memory.summary = MemorySummary(thoughts: 14, digestedEntries: 9, waitingEntries: 0)
+        }
+
+        XCTAssertEqual(image.size.height, 600, accuracy: 1)
+        XCTAssertEqual(SettingsView.tallestThatFits(screenHeight: 866), 822)
+        XCTAssertEqual(SettingsView.tallestThatFits(screenHeight: nil), 756)
+        XCTAssertEqual(SettingsView.tallestThatFits(screenHeight: 200), 320)
+    }
+
+    @MainActor
+    func testSettingsWithEverythingOnIsTallerThanALaptopScreen() throws {
+        // The reason for the test above: drawn whole, this is taller than the 866 points a 14 inch MacBook has.
+        let image = try snapshot(named: "settings-light-everything-on", dark: false) { parts in
+            parts.settings.aiEnabled = true
+            parts.settings.provider = .local
+            parts.settings.talkModel = "llama-test"
+            parts.settings.digestModel = "llama-test"
+            parts.settings.memoryEnabled = true
+            parts.versions.enabled = true
+            parts.lock.settings.enabled = true
+            parts.catalog.show(.loaded(Self.localModels))
+            parts.memory.summary = MemorySummary(thoughts: 14, digestedEntries: 9, waitingEntries: 0)
+        }
+
+        XCTAssertGreaterThan(image.size.height + 32, 866)
+    }
+
+    @MainActor
     func testSettingsWithTheLockOn() throws {
         try snapshot(named: "settings-light-lock-on", dark: false) { parts in
             parts.versions.enabled = true
@@ -210,7 +249,8 @@ final class SettingsSnapshotTests: XCTestCase {
     }
 
     @MainActor
-    private func snapshot(named name: String, dark: Bool, lock: AppLock? = nil, configure: (Parts) -> Void) throws {
+    @discardableResult
+    private func snapshot(named name: String, dark: Bool, lock: AppLock? = nil, tallest: CGFloat? = nil, configure: (Parts) -> Void) throws -> NSImage {
         let box = SettingsBox()
         box.defaults.set(dark ? "dark" : "light", forKey: "colorScheme")
 
@@ -243,10 +283,14 @@ final class SettingsSnapshotTests: XCTestCase {
             catalog: parts.catalog,
             connection: FakeProvider(),
             journalImport: parts.journalImport,
-            lock: parts.lock
+            lock: parts.lock,
+            // Drawn whole, however tall. The app itself stops at the height of the screen.
+            tallestAllowed: tallest ?? .infinity
         )
         .defaultAppStorage(box.defaults)
 
-        attach(try renderOffscreen(view, dark: dark), named: name)
+        let image = try renderOffscreen(view, dark: dark)
+        attach(image, named: name)
+        return image
     }
 }

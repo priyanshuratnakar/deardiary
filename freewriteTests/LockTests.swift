@@ -278,18 +278,40 @@ import Testing
         #expect(box.check.reasons.last == "turn off the lock")
     }
 
-    @Test func turningTheLockOnDoesNotLockStraightAwayAndNeedsNoCheck() async {
+    @Test func turningTheLockOnAsksOnceAndDoesNotLockStraightAway() async {
         let box = LockBox(on: false)
         let lock = box.lock()
+        box.check.answers = [.allowed]
 
         await lock.setEnabled(true)
 
         #expect(box.settings.enabled)
         #expect(!lock.isLocked)
-        #expect(box.check.reasons.isEmpty)
+        #expect(box.check.reasons == ["turn on the lock"])
         // From now on it locks.
         lock.lockNow()
         #expect(lock.isLocked)
+    }
+
+    @Test func theLockStaysOffUnlessTheCheckIsSeenToWork() async {
+        let box = LockBox(on: false)
+        let lock = box.lock()
+
+        // The sheet was closed: still off, and nothing is said.
+        box.check.answers = [.cancelled]
+        await lock.setEnabled(true)
+        #expect(!box.settings.enabled)
+        #expect(lock.problem == nil)
+
+        // The check did not pass: still off, and it says so.
+        box.check.answers = [.failed]
+        await lock.setEnabled(true)
+        #expect(!box.settings.enabled)
+        #expect(lock.problem == "Couldn't check that it's you. Try again.")
+
+        // So a lock that cannot be opened on this Mac can never be switched on.
+        lock.lockNow()
+        #expect(!lock.isLocked)
     }
 
     @Test func theLockCannotBeTurnedOnWhereTheMacCannotCheck() async {

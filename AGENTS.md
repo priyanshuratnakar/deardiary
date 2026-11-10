@@ -499,13 +499,17 @@ Rules the code follows (keep them when changing it):
 4. **When it asks without a click:** when the locked window first comes into view at launch, and when Dear Diary comes back to the front after locking in the background or after a trip away while locked. Never straight after "Lock now", and never straight after the sheet was closed: the trip to the background that macOS's own sheet causes (while `isAsking`) does not count. This is what stops a closed sheet from coming straight back, so be careful when changing `asksByItself`.
 5. **Covered means inert.** `LockGate` disables the window's content and hides it from VoiceOver, and closing the lock takes the keyboard away from whatever had it, so nothing typed while locked lands on the page. The content stays alive underneath, so unlocking returns to the same entry with History and talk as they were.
 6. **Both windows.** `freewriteApp.swift` adds `LockGate` to the journal window and to Settings. Settings is covered too because it can open the journal's folders, forget memory and switch the lock off.
-7. **Turning the lock off asks macOS first**, so only the Mac's owner can. Turning it on needs no check, only a Mac that can check, and does not lock straight away.
+7. **Turning the lock on or off asks macOS first.** Off, so only the Mac's owner can. On, so the check is seen to work on this Mac before the lock can ever close: if the sheet does not appear or does not pass, the lock stays off and nobody is locked out. Turning it on does not lock straight away. (The first version turned on without asking. The owner then opened the app, saw no password prompt because the lock was still off, and reported it as broken; asking at once makes it plain that the lock is real.)
 8. **Background work carries on while locked** (memory, versions, a talk reply in progress). It reads files, not the screen.
 9. **The line on the locked window** ("for your eyes only") is `LockScreen.line`, the owner's to edit. The other lines are in `docs/messages.md`.
 
 `SettingsView` gains the Lock section between Versions and bringing entries across. The lock mark is `pika-lock`, from the free Pikaicons pack like the others.
 
+**Settings scrolls when it has to.** With everything switched on, Settings is about 840 points tall, which with its title bar is more than a 14 inch MacBook has room for, and a Settings window cannot be resized. `SettingsView` now shows its sections whole when they fit and inside a scroll view when they do not (`ViewThatFits`), up to `tallestAllowed`, which the app takes from the screen (`tallestThatFits(screenHeight:)`). Picture tests pass their own limit so pictures are drawn whole. Keep this in mind when adding a section.
+
 Tests: `LockTests.swift` (the settings, and the lock with a clock the test controls) and `LockSnapshotTests.swift` (the locked window in both modes, and over the real writing window to show nothing of the page is left in view). `FakeAuthenticator` and `LockBox` in `LockTestSupport.swift` play macOS's check from a script; no test ever asks for Touch ID or a password. Checked once on the owner's Mac, from inside the app and without showing anything: macOS can check the owner and Touch ID is ready. Never tried: the real sheet, and the lock closing on a real sleep, screen lock or time in the background.
+
+If the lock ever cannot be opened, the app can be started unlocked from Terminal by adding `-lock.enabled NO` after the path to its program inside the app bundle. That overrides the saved switch for that one run.
 
 Not built: a menu item or shortcut to lock, and any encryption of the files.
 
