@@ -18,6 +18,8 @@ import AppKit
 enum MapSelection: Equatable {
     case thought(String)
     case link(String)
+    /// A day's dot, by the id of the entry written that day.
+    case day(UUID)
 }
 
 /// A fix that is part-way through: waiting for a name, a second thought, a reason, or a second click.
@@ -82,6 +84,26 @@ struct MapLinkDetail: Equatable {
     let days: [MapDayQuotes]
 }
 
+/// What the panel shows for a day.
+struct MapDayDetail: Equatable {
+    struct Touched: Equatable, Identifiable {
+        let thoughtID: String
+        let label: String
+        let kind: ThoughtKind
+        /// The lines from that day's entry that are behind this thought.
+        let quotes: [String]
+
+        var id: String { thoughtID }
+    }
+
+    let entryID: UUID
+    /// The day, as yyyy-MM-dd.
+    let date: String
+    /// What the AI noted about the entry as a whole, if it has been read.
+    let summary: String?
+    let thoughts: [Touched]
+}
+
 @MainActor
 final class MapModel: ObservableObject {
     @Published private(set) var graph = MemoryGraph()
@@ -104,10 +126,32 @@ final class MapModel: ObservableObject {
     @Published var zoom: CGFloat = 1
 
     private(set) var memory = MemorySnapshot()
+    /// What the AI noted about each entry as a whole, by entry.
+    private(set) var summaries: [UUID: String] = [:]
     private let store: MemoryStore
     private let applyFix: (MemoryFix) async -> Bool
     private var neighbours: [String: Set<String>] = [:]
-    private var draggedThought: String? = nil
+    /// The thought being dragged, if any.
+    @Published private(set) var draggedThought: String? = nil
+    /// The thought the dragged one is being held over. Letting go there links the two.
+    @Published private(set) var dropTarget: String? = nil
+    /// Where the dragged thought sat before the drag, in the map's own coordinates.
+    private(set) var dragStart: CGPoint? = nil
+    /// True while the "Find" line is open.
+    @Published var isFinding = false {
+        didSet {
+            if !isFinding { query = "" }
+        }
+    }
+    /// What has been typed into "Find".
+    @Published var query = "" {
+        didSet {
+            // Typing looks across the whole map again, so whatever was open is closed.
+            if query != oldValue, isFinding, selection != nil {
+                selection = nil
+            }
+        }
+    }
     private var panAtDragStart: CGSize = .zero
     private var zoomAtPinchStart: CGFloat = 1
     private var scrollMonitor: Any? = nil
@@ -154,18 +198,23 @@ final class MapModel: ObservableObject {
     /// Reads the thought notes, places any thoughts that have no remembered position, and saves the result.
     func load() async {
         let store = self.store
-        let loaded = await Task.detached(priority: .userInitiated) { () -> (MemorySnapshot, MemoryGraph) in
+        let loaded = await Task.detached(priority: .userInitiated) { () -> (MemorySnapshot, MemoryGraph, [UUID: String]) in
             let memory = store.loadSnapshot()
             let built = GraphBuilder.build(from: memory, saved: store.loadGraphPositions())
             let settled = GraphLayout.settle(built.graph, moving: built.unplaced)
             if !built.unplaced.isEmpty {
                 try? store.saveGraph(settled)
             }
-            return (memory, settled)
+            var summaries: [UUID: String] = [:]
+            for digest in store.loadAllDigests() where !digest.failed && !digest.summary.isEmpty {
+                summaries[digest.entryID] = digest.summary
+            }
+            return (memory, settled, summaries)
         }.value
 
         memory = loaded.0
         graph = loaded.1
+        summaries = loaded.2
         neighbours = graph.neighbours
         isLoading = false
 
@@ -175,15 +224,18 @@ final class MapModel: ObservableObject {
             selection = nil
         case .link(let id) where !graph.edges.contains(where: { $0.id == id }):
             selection = nil
+        case .day(let entryID) where !graph.nodes.contains(where: { $0.entryID == entryID }):
+            selection = nil
         default:
             break
         }
     }
 
     /// For tests and pictures: show this memory without touching any files.
-    func show(memory: MemorySnapshot, positions: [String: CGPoint] = [:]) {
+    func show(memory: MemorySnapshot, positions: [String: CGPoint] = [:], summaries: [UUID: String] = [:]) {
         let built = GraphBuilder.build(from: memory, saved: positions)
         self.memory = memory
+        self.summaries = summaries
         graph = GraphLayout.settle(built.graph, moving: built.unplaced)
         neighbours = graph.neighbours
         isLoading = false
@@ -208,7 +260,7 @@ final class MapModel: ObservableObject {
     /// The size a dot is drawn at. Dots shrink with the map when zooming out, so a
     /// crowded map stays readable, and grow only a little when zooming in.
     func screenRadius(_ node: GraphNode) -> CGFloat {
-        max(3, node.radius * min(zoom, 1.6))
+        max(node.isDay ? 1.7 : 2.6, node.radius * min(zoom, 1.6))
     }
 
     /// Scales and centres the map so every dot is in view.
@@ -236,10 +288,11 @@ final class MapModel: ObservableObject {
 
     // MARK: - What is under the pointer
 
-    /// The thought at a point on screen, if any. The target is a little bigger than the dot.
-    func thought(at point: CGPoint, in size: CGSize) -> String? {
+    /// The dot at a point on screen, if any: a thought or a day. The target is a little
+    /// bigger than the dot. With `thoughtsOnly`, days are passed over.
+    func thought(at point: CGPoint, in size: CGSize, excluding excluded: String? = nil, thoughtsOnly: Bool = false) -> String? {
         var best: (id: String, distance: CGFloat)? = nil
-        for node in graph.nodes {
+        for node in graph.nodes where node.id != excluded && !(thoughtsOnly && node.isDay) {
             let centre = screenPoint(node.position, in: size)
             let distance = hypot(centre.x - point.x, centre.y - point.y)
             if distance <= screenRadius(node) + 6, distance < (best?.distance ?? .infinity) {
@@ -253,7 +306,8 @@ final class MapModel: ObservableObject {
     func link(at point: CGPoint, in size: CGSize) -> String? {
         let positions = Dictionary(uniqueKeysWithValues: graph.nodes.map { ($0.id, screenPoint($0.position, in: size)) })
         var best: (id: String, distance: CGFloat)? = nil
-        for edge in graph.edges {
+        // Only a link between two thoughts can be opened. The line from a day to a thought cannot.
+        for edge in graph.edges where !edge.isDayLink {
             guard let a = positions[edge.first], let b = positions[edge.second] else { continue }
             let distance = Self.distance(from: point, toSegment: a, b)
             if distance <= 6, distance < (best?.distance ?? .infinity) {
@@ -282,20 +336,27 @@ final class MapModel: ObservableObject {
         }
     }
 
+    /// True when the point is on a day's dot. While another thought is being picked, a click
+    /// that lands on one of the many small day dots is passed over rather than backing out.
+    private func isOverADay(_ point: CGPoint, in size: CGSize) -> Bool {
+        guard let id = thought(at: point, in: size) else { return false }
+        return graph.nodes.first { $0.id == id }?.isDay == true
+    }
+
     func tap(at point: CGPoint, in size: CGSize) {
         // Part-way through a merge or a link, a click picks the other thought.
         switch pending {
         case .pickingMergeTarget(let source):
-            if let id = thought(at: point, in: size), id != source {
+            if let id = thought(at: point, in: size, thoughtsOnly: true), id != source {
                 pending = .confirmingMerge(source: source, target: id)
-            } else {
+            } else if !isOverADay(point, in: size) {
                 pending = nil
             }
             return
         case .pickingLinkTarget(let source):
-            if let id = thought(at: point, in: size), id != source {
+            if let id = thought(at: point, in: size, thoughtsOnly: true), id != source {
                 pending = .reasonForLink(source: source, target: id)
-            } else {
+            } else if !isOverADay(point, in: size) {
                 pending = nil
             }
             return
@@ -304,7 +365,11 @@ final class MapModel: ObservableObject {
         }
 
         if let id = thought(at: point, in: size) {
-            selection = .thought(id)
+            if let entryID = graph.nodes.first(where: { $0.id == id })?.entryID {
+                selection = .day(entryID)
+            } else {
+                selection = .thought(id)
+            }
         } else if let id = link(at: point, in: size) {
             selection = .link(id)
         } else {
@@ -315,11 +380,19 @@ final class MapModel: ObservableObject {
     /// A drag that starts on a dot moves the dot; a drag that starts on empty space moves the map.
     func drag(from start: CGPoint, to current: CGPoint, in size: CGSize, isFirstChange: Bool) {
         if isFirstChange {
-            draggedThought = thought(at: start, in: size)
+            let grabbed = thought(at: start, in: size)
+            draggedThought = grabbed
+            dragStart = grabbed.flatMap { id in graph.nodes.first { $0.id == id }?.position }
+            dropTarget = nil
             panAtDragStart = pan
         }
         if let id = draggedThought, let index = graph.nodes.firstIndex(where: { $0.id == id }) {
             graph.nodes[index].position = mapPoint(current, in: size)
+            // A thought held over another thought: letting go here will link the two.
+            let target = graph.nodes[index].isDay ? nil : thought(at: current, in: size, excluding: id, thoughtsOnly: true)
+            if dropTarget != target {
+                dropTarget = target
+            }
         } else {
             pan = CGSize(
                 width: panAtDragStart.width + current.x - start.x,
@@ -329,10 +402,23 @@ final class MapModel: ObservableObject {
     }
 
     func endDrag() {
-        if draggedThought != nil {
-            savePositions()
+        defer {
+            draggedThought = nil
+            dropTarget = nil
+            dragStart = nil
         }
-        draggedThought = nil
+        guard let id = draggedThought else { return }
+
+        if let target = dropTarget, let start = dragStart,
+           let index = graph.nodes.firstIndex(where: { $0.id == id }) {
+            // Dropped on another thought: that is a link, not a move. The dot goes back
+            // where it was and the panel asks how the two are linked.
+            graph.nodes[index].position = start
+            selection = .thought(id)
+            pending = .reasonForLink(source: id, target: target)
+            return
+        }
+        savePositions()
     }
 
     func pinch(_ magnification: CGFloat, isFirstChange: Bool) {
@@ -396,16 +482,23 @@ final class MapModel: ObservableObject {
         if isPickingAnotherThought {
             return 0.8
         }
+        if isSearching, hoveredThought == nil, selection == nil {
+            return 0.25
+        }
         if case .link(let id) = selection, hoveredThought == nil {
             return id == edge.id ? 1 : 0.25
         }
-        guard let centre = hoveredThought ?? selectedThoughtID else { return 0.8 }
+        guard let centre = hoveredThought ?? selectedNodeID else { return 0.8 }
         return edge.first == centre || edge.second == centre ? 1 : 0.2
     }
 
-    private var selectedThoughtID: String? {
-        if case .thought(let id) = selection { return id }
-        return nil
+    /// The dot that is selected, if a thought or a day is.
+    private var selectedNodeID: String? {
+        switch selection {
+        case .thought(let id): return id
+        case .day(let entryID): return GraphNode.dayID(entryID)
+        case .link, nil: return nil
+        }
     }
 
     /// True while a merge or a link is waiting for a click on the other thought.
@@ -433,12 +526,19 @@ final class MapModel: ObservableObject {
         if let hovered = hoveredThought {
             return (neighbours[hovered] ?? []).union([hovered])
         }
+        // With nothing open, what has been typed into "Find" decides what stands out.
+        if selection == nil, isSearching {
+            return Set(matches.map(\.id))
+        }
         switch selection {
         case .thought(let id):
             return (neighbours[id] ?? []).union([id])
         case .link(let id):
             guard let edge = graph.edges.first(where: { $0.id == id }) else { return nil }
             return [edge.first, edge.second]
+        case .day(let entryID):
+            let id = GraphNode.dayID(entryID)
+            return (neighbours[id] ?? []).union([id])
         case nil:
             return nil
         }
@@ -465,7 +565,7 @@ final class MapModel: ObservableObject {
     /// another dot. Zooming in makes room, so more names appear.
     func placedLabels(in size: CGSize, fontName: String) -> [PlacedLabel] {
         let nodes = graph.nodes
-        let crowded = nodes.count > 40
+        let crowded = nodes.filter { !$0.isDay }.count > 40
         let focus = focusedThoughts ?? []
         let centres = nodes.map { screenPoint($0.position, in: size) }
         let radii = nodes.map { screenRadius($0) }
@@ -482,6 +582,10 @@ final class MapModel: ObservableObject {
         var taken: [CGRect] = []
         for (rank, index) in order.enumerated() {
             let node = nodes[index]
+            // A day is only named while it is the one under the pointer or the one selected.
+            if node.isDay && !hasFocus(node.id) { continue }
+            // A thought held over another gives up its name, so the other's can be read.
+            if node.id == draggedThought && dropTarget != nil { continue }
             let centre = centres[index]
             // Nothing far outside the window needs a name.
             guard centre.x > -80, centre.x < size.width + 80, centre.y > -40, centre.y < size.height + 40 else { continue }
@@ -493,6 +597,11 @@ final class MapModel: ObservableObject {
             let isFocus = focus.contains(node.id)
 
             if crowded && !isFocus {
+                // Zoomed out on a crowded map, a thought that came up only once is not named.
+                // Zooming in, pointing at it or selecting it brings its name back.
+                if zoom < 0.9 && node.weight < 2 {
+                    continue
+                }
                 if taken.contains(where: { $0.intersects(rect) }) {
                     continue
                 }
@@ -522,7 +631,53 @@ final class MapModel: ObservableObject {
 
     /// True for the thought under the pointer or the one selected (not merely linked to it).
     private func hasFocus(_ id: String) -> Bool {
-        hoveredThought == id || selectedThoughtID == id
+        if hoveredThought == id || selectedNodeID == id || dropTarget == id {
+            return true
+        }
+        return selection == nil && isSearching && matches.contains { $0.id == id }
+    }
+
+    // MARK: - Find
+
+    /// True when something has been typed into "Find".
+    var isSearching: Bool {
+        isFinding && !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// The thoughts whose name, or one of whose other names, contains what was typed.
+    /// Capitals and accents are ignored. The most recurring come first.
+    var matches: [GraphNode] {
+        let typed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isFinding, !typed.isEmpty else { return [] }
+        return graph.nodes
+            .filter { node in
+                guard !node.isDay else { return false }
+                let names = [node.label] + (memory.thoughts[node.id]?.aliases ?? [])
+                return names.contains { $0.range(of: typed, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
+            }
+            .sorted { ($1.weight, $0.label.lowercased()) < ($0.weight, $1.label.lowercased()) }
+    }
+
+    /// What to say beside the line being typed in.
+    var findSummary: String? {
+        guard isSearching else { return nil }
+        let count = matches.count
+        return count == 0 ? "No thought by that name" : "\(count) \(count == 1 ? "thought" : "thoughts")"
+    }
+
+    /// Return in the "Find" line: opens the first match, bringing it into view if it is off screen.
+    func openFirstMatch(in size: CGSize) {
+        guard let first = matches.first else { return }
+        selection = .thought(first.id)
+        let point = screenPoint(first.position, in: size)
+        let visible = CGRect(origin: .zero, size: size).insetBy(dx: 60, dy: 60)
+        if !visible.contains(point) {
+            pan = CGSize(width: -first.position.x * zoom, height: -first.position.y * zoom)
+        }
+    }
+
+    func stopFinding() {
+        isFinding = false
     }
 
     private var labelSizes: [String: CGSize] = [:]
@@ -585,6 +740,30 @@ final class MapModel: ObservableObject {
                 .map { MapThoughtDetail.Connection(thoughtID: $0.key, label: $0.value.label, reasons: $0.value.reasons, linkID: GraphEdge.id(id, $0.key)) }
                 .sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
         )
+    }
+
+    func dayDetail(_ entryID: UUID) -> MapDayDetail? {
+        guard let node = graph.nodes.first(where: { $0.entryID == entryID }), let date = node.date else { return nil }
+        let touched = memory.thoughts.values
+            .compactMap { thought -> MapDayDetail.Touched? in
+                let quotes = thought.evidence.filter { $0.entryID == entryID }.map(\.quote)
+                guard !quotes.isEmpty else { return nil }
+                var unique: [String] = []
+                for quote in quotes where !unique.contains(quote) {
+                    unique.append(quote)
+                }
+                return MapDayDetail.Touched(thoughtID: thought.id, label: thought.label, kind: thought.kind, quotes: unique)
+            }
+            .sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
+        return MapDayDetail(entryID: entryID, date: date, summary: summaries[entryID], thoughts: touched)
+    }
+
+    /// How much is on the map, in a few words.
+    var countLine: String? {
+        let thoughts = graph.thoughts.count
+        let days = graph.days.count
+        guard thoughts > 0 else { return nil }
+        return "\(thoughts) \(thoughts == 1 ? "thought" : "thoughts") · \(days) \(days == 1 ? "day" : "days")"
     }
 
     func linkDetail(_ id: String) -> MapLinkDetail? {

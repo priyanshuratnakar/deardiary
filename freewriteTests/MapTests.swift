@@ -16,7 +16,7 @@ import Testing
 
     @Test func everyThoughtIsADotSizedByHowManyEntriesTouchedIt() throws {
         let graph = GraphBuilder.build(from: try MemoryWeek.built().memory, saved: [:]).graph
-        let weights = Dictionary(uniqueKeysWithValues: graph.nodes.map { ($0.id, $0.weight) })
+        let weights = Dictionary(uniqueKeysWithValues: graph.thoughts.map { ($0.id, $0.weight) })
 
         #expect(weights == [
             "meera": 3,
@@ -33,15 +33,62 @@ import Testing
 
     @Test func everyLinkIsOneLineWithItsReason() throws {
         let graph = GraphBuilder.build(from: try MemoryWeek.built().memory, saved: [:]).graph
+        let links = graph.edges.filter { !$0.isDayLink }
 
-        #expect(graph.edges.map(\.id) == [
+        #expect(links.map(\.id) == [
             "meera|saying-yes-under-pressure",
             "meera|the-pricing-page",
             "saying-yes-under-pressure|trouble-sleeping",
         ])
-        #expect(graph.edges[1].reasons == ["asked for by"])
+        #expect(links[1].reasons == ["asked for by"])
         #expect(graph.edges.allSatisfy { $0.count == 1 })
-        #expect(graph.neighbours["meera"] == ["saying-yes-under-pressure", "the-pricing-page"])
+        #expect(Set((graph.neighbours["meera"] ?? []).filter { !$0.hasPrefix("day:") }) == ["saying-yes-under-pressure", "the-pricing-page"])
+    }
+
+    // MARK: - Days
+
+    @Test func everyEntryMemoryHasReadIsASmallDotJoinedToTheThoughtsItTouched() throws {
+        let graph = GraphBuilder.build(from: try MemoryWeek.built().memory, saved: [:]).graph
+
+        #expect(graph.thoughts.count == 7)
+        #expect(graph.days.map(\.entryID) == MemoryWeek.entries.map(\.id))
+        #expect(graph.days.map(\.date) == ["2026-11-02", "2026-11-04", "2026-11-06", "2026-11-08"])
+        #expect(graph.days.first?.label == "Monday 2 November 2026")
+        #expect(graph.days.allSatisfy { $0.kind == nil && $0.isDay })
+        #expect(graph.thoughts.allSatisfy { $0.kind != nil && !$0.isDay })
+
+        // Monday's entry touched four thoughts, so its dot has four lines.
+        let monday = GraphNode.dayID(MemoryWeek.monday.id)
+        #expect(graph.neighbours[monday] == ["meera", "saying-yes-under-pressure", "the-launch", "trouble-sleeping"])
+        #expect(graph.days.first?.weight == 4)
+        let dayLines = graph.edges.filter(\.isDayLink)
+        #expect(dayLines.allSatisfy { $0.reasons.isEmpty && $0.count == 1 })
+        // One line for each thought and entry pair, however many lines were quoted.
+        #expect(dayLines.count == graph.thoughts.map(\.weight).reduce(0, +))
+    }
+
+    @Test func aDayIsAlwaysSmallAndAThoughtIsNeverSmallerThanADay() throws {
+        let graph = GraphBuilder.build(from: try MemoryWeek.built().memory, saved: [:]).graph
+        let dayRadius = try #require(graph.days.first?.radius)
+
+        #expect(graph.days.allSatisfy { $0.radius == dayRadius })
+        #expect(graph.thoughts.allSatisfy { $0.radius > dayRadius * 1.5 })
+    }
+
+    @Test func whenAThoughtGoesItsDaysStayOnlyWhileAnotherThoughtStillUsesThem() throws {
+        var memory = try MemoryWeek.built().memory
+        // Friday's entry touched Meera, the pricing page, saying yes and trouble sleeping.
+        let before = GraphBuilder.build(from: memory, saved: [:]).graph.days.count
+        for id in memory.thoughts.keys where id != "running" && id != "arjun" {
+            memory.thoughts[id] = nil
+        }
+
+        let graph = GraphBuilder.build(from: memory, saved: [:]).graph
+
+        #expect(before == 4)
+        // Only Wednesday's entry mentioned running and Arjun.
+        #expect(graph.days.map(\.date) == ["2026-11-04"])
+        #expect(graph.edges.count == 2)
     }
 
     @Test func severalLinksBetweenTheSameTwoThoughtsAreOneLine() throws {
@@ -66,7 +113,8 @@ import Testing
 
         let graph = GraphBuilder.build(from: memory, saved: [:]).graph
 
-        #expect(graph.edges.map(\.id) == ["saying-yes-under-pressure|trouble-sleeping"])
+        #expect(graph.edges.filter { !$0.isDayLink }.map(\.id) == ["saying-yes-under-pressure|trouble-sleeping"])
+        #expect(graph.edges.allSatisfy { !$0.id.contains("meera") })
     }
 
     @Test func rememberedPositionsAreUsedAndTheRestAreReportedAsNew() throws {
@@ -75,7 +123,8 @@ import Testing
         let built = GraphBuilder.build(from: try MemoryWeek.built().memory, saved: saved)
 
         #expect(built.graph.nodes.first { $0.id == "meera" }?.position == CGPoint(x: 40, y: -25))
-        #expect(built.unplaced.count == 6)
+        // Six thoughts and four days have no place yet.
+        #expect(built.unplaced.count == 10)
         #expect(!built.unplaced.contains("meera"))
     }
 
@@ -86,8 +135,11 @@ import Testing
 
         #expect(radius(1) < radius(4))
         #expect(radius(4) < radius(16))
+        // A thought that came up once is a small dot; one that keeps coming back is a big one.
         #expect(radius(1) >= 5)
-        #expect(radius(10_000) == 20)
+        #expect(radius(1) < 6)
+        #expect(radius(40) > radius(1) * 3)
+        #expect(radius(10_000) == 22)
     }
 }
 
@@ -221,7 +273,8 @@ import Testing
         let positions = sandbox.store.loadGraphPositions()
 
         #expect(sandbox.store.graphURL.path.hasSuffix("/memory/graph.json"))
-        #expect(positions.count == 7)
+        // Seven thoughts and four days.
+        #expect(positions.count == 11)
         for node in graph.nodes {
             let saved = try #require(positions[node.id])
             #expect(abs(saved.x - node.position.x) <= 0.05)
@@ -238,9 +291,11 @@ import Testing
         let edges = try #require(json["edges"] as? [[String: Any]])
 
         #expect(json["version"] as? Int == 1)
-        #expect(nodes.count == 7)
+        #expect(nodes.count == 11)
         #expect(Set(nodes[0].keys) == ["id", "label", "kind", "weight", "x", "y"])
-        #expect(edges.count == 3)
+        #expect(nodes.filter { $0["kind"] as? String == "day" }.count == 4)
+        // Three links between thoughts, and a line for each thought and entry pair.
+        #expect(edges.count == 3 + 14)
         #expect(Set(edges[0].keys) == ["from", "to", "count", "reasons"])
     }
 
@@ -250,7 +305,7 @@ import Testing
         try sandbox.store.saveGraph(try graph())
 
         sandbox.store.forgetAIBuilt()
-        #expect(sandbox.store.loadGraphPositions().count == 7)
+        #expect(sandbox.store.loadGraphPositions().count == 11)
 
         sandbox.store.forgetEverything()
         #expect(sandbox.store.loadGraphPositions().isEmpty)
@@ -310,7 +365,7 @@ import Testing
         await first.load()
 
         #expect(first.isLoading == false)
-        #expect(first.graph.nodes.count == 7)
+        #expect(first.graph.thoughts.count == 7)
         #expect(FileManager.default.fileExists(atPath: sandbox.store.graphURL.path))
 
         // Opening it again puts every dot back in the same place.
@@ -396,8 +451,12 @@ import Testing
         model.tap(at: meera, in: size)
         #expect(model.selection == .thought("meera"))
 
-        // Half-way along the line between Meera and the pricing page.
-        model.tap(at: CGPoint(x: (meera.x + pricing.x) / 2, y: (meera.y + pricing.y) / 2), in: size)
+        // A point on the line between Meera and the pricing page that no dot sits on.
+        let steps = stride(from: 0.2, through: 0.8, by: 0.05).map { CGFloat($0) }
+        let onTheLine = try #require(steps
+            .map { CGPoint(x: meera.x + (pricing.x - meera.x) * $0, y: meera.y + (pricing.y - meera.y) * $0) }
+            .first { model.thought(at: $0, in: size) == nil })
+        model.tap(at: onTheLine, in: size)
         #expect(model.selection == .link("meera|the-pricing-page"))
 
         model.tap(at: CGPoint(x: 3, y: 3), in: size)
@@ -524,7 +583,7 @@ import Testing
         let model = try weekModel()
         let entryIDs = Set(MemoryWeek.entries.map(\.id))
 
-        for node in model.graph.nodes {
+        for node in model.graph.thoughts {
             let detail = try #require(model.thoughtDetail(node.id))
             #expect(!detail.days.isEmpty)
             #expect(detail.days.allSatisfy { entryIDs.contains($0.entryID) })
@@ -547,6 +606,6 @@ import Testing
         await model.load()
 
         #expect(model.selection == nil)
-        #expect(model.graph.nodes.count == 6)
+        #expect(model.graph.thoughts.count == 6)
     }
 }

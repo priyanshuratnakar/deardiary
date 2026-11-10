@@ -67,8 +67,15 @@ Files: `freewrite/Map/MapView.swift`, `freewrite/Map/MapDetailView.swift`.
 
 | When | Message |
 | --- | --- |
+| Empty, no AI set up | Nothing in memory yet. Memory is built by an AI that reads each entry after you have finished with it. (Word: Set it up in Settings) |
+| Empty, memory off | Nothing in memory yet. Turn memory on in Settings and thoughts will appear here as you write. (Word: Open Settings) |
 | Empty, memory on | Nothing in memory yet. Thoughts appear here once an entry has settled, about ten minutes after you stop writing. |
-| Empty, memory off | Nothing in memory yet. Turn memory on in Settings and thoughts will appear here as you write. |
+| How much is on the map | 179 thoughts · 198 days |
+| A thought held over another | Let go to link Running and Trouble sleeping |
+| Find, before typing | A name |
+| Find, with matches | 2 thoughts |
+| Find, with none | No thought by that name |
+| A day's panel | day · touched 4 thoughts; What it touched; Open this entry |
 | Picking a thought to merge into | Click the thought to fold this one into. |
 | Before a merge | Fold “Arjun” into “Meera”? Its lines, links and names move over. This cannot be undone here. |
 | Picking a thought to link to | Click the thought to link this one to. |

@@ -190,12 +190,13 @@ What changes:
 - **Any AI, including a free one.** Settings offers four services: a free open model running on this Mac through Ollama, OpenAI by API key, Claude by API key, or any other service that speaks the OpenAI chat format. A ChatGPT or Claude subscription cannot be used here: neither includes API use by another app.
 - **Models are picked, never typed.** The list comes from the chosen service.
 - **Settings says what is missing** in one plain line, and old results do not linger.
-- **Memory can be found.** The word "Memory" is always in the bottom bar. This is the one exception to principle 1: with AI off it shows one line on how to set memory up. Nothing is sent until AI is on.
+- **Memory can be found.** The word "Memory" is always in the bottom bar. This is the one exception to principle 1: with AI off it shows whatever is already in memory, or one line on how to set memory up. Nothing is sent until AI is on.
+- **Memory looks like a second brain.** The graph shows every day you wrote as a small grey dot, joined by thin straight lines to the thoughts it touched. Thoughts are the coloured dots, bigger the more days touch them. The thoughts that keep coming back end up as hubs with their days fanned around them.
 
 | # | Milestone | Done when |
 | --- | --- | --- |
 | M8 | Settings and any AI | You can choose a service, pick its models from a list, and see what is missing. Talk and memory work through whichever service is chosen. With AI off, the app still makes no network calls. |
-| M9 | Memory you can see | "Memory" is always in the bottom bar. Links curve, the selected thought's links pulse, one thought can be dragged onto another to link them, and a thought can be found by name. |
+| M9 | Memory you can see | "Memory" is always in the bottom bar. The graph shows thoughts and days. Clicking a day shows what it touched and opens the entry. One thought can be dragged onto another to link them, and a thought can be found by name. |
 | M10 | First run and moving in | A first run points to setting up AI. Entries from the original freewrite app can be brought across. |
 
 ## Open questions

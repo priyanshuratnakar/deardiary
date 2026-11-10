@@ -1382,13 +1382,11 @@ struct ContentView: View {
                             Text("•")
                                 .foregroundColor(.gray)
 
-                            // Dear Diary: Map sits beside Talk, when AI is on and a key is saved.
-                            if talk.isAvailable {
-                                MapWordButton(isShowingMap: $showingMap, textColor: textColor, textHoverColor: textHoverColor, isHoveringBottomNav: $isHoveringBottomNav)
+                            // Dear Diary: "Memory" sits beside Talk or Chat, always, so memory can be found.
+                            MapWordButton(isShowingMap: $showingMap, textColor: textColor, textHoverColor: textHoverColor, isHoveringBottomNav: $isHoveringBottomNav)
 
-                                Text("•")
-                                    .foregroundColor(.gray)
-                            }
+                            Text("•")
+                                .foregroundColor(.gray)
 
                             if !isViewingVideoEntry {
                                 // Backspace toggle button
@@ -1740,7 +1738,7 @@ struct ContentView: View {
         }
         .overlay {
             // Dear Diary: the map of memory, over the whole window.
-            if showingMap && talk.isAvailable {
+            if showingMap {
                 MapView(
                     fontName: selectedFont,
                     colorScheme: colorScheme,

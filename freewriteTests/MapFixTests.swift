@@ -83,7 +83,7 @@ final class MapFixSandbox {
 
         #expect(model.pending == nil)
         #expect(model.selection == .thought("meera"))
-        #expect(model.graph.nodes.count == 6)
+        #expect(model.graph.thoughts.count == 6)
         #expect(model.thoughtDetail("meera")?.aliases.contains("Arjun") == true)
         #expect(map.onDisk.thoughts["arjun"] == nil)
         #expect(map.pins.resolve("arjun") == "meera")
@@ -105,7 +105,7 @@ final class MapFixSandbox {
         #expect(model.selection == .thought("arjun"))
 
         #expect(map.pins.isEmpty)
-        #expect(model.graph.nodes.count == 7)
+        #expect(model.graph.thoughts.count == 7)
     }
 
     @Test func whileAnotherThoughtIsBeingPickedNoneIsFadedAndThenTheTwoStandOut() async throws {
@@ -167,7 +167,7 @@ final class MapFixSandbox {
 
         #expect(model.pending == nil)
         #expect(model.selection == nil)
-        #expect(model.graph.nodes.count == 6)
+        #expect(model.graph.thoughts.count == 6)
         #expect(map.onDisk.thoughts["running"] == nil)
         #expect(map.pins.isDeleted("running"))
 
@@ -189,7 +189,7 @@ final class MapFixSandbox {
         #expect(model.pending == nil)
         #expect(model.selection == nil)
         #expect(model.graph.edges.contains { $0.id == linkID } == false)
-        #expect(model.graph.nodes.count == 7)
+        #expect(model.graph.thoughts.count == 7)
         #expect(map.pins.isLinkRemoved("the-pricing-page", "meera"))
         #expect(model.thoughtDetail("meera")?.connections.map(\.thoughtID).contains("the-pricing-page") == false)
     }
@@ -208,7 +208,7 @@ final class MapFixSandbox {
         #expect(model.pending == nil)
 
         #expect(map.pins.isEmpty)
-        #expect(model.graph.nodes.count == 7)
+        #expect(model.graph.thoughts.count == 7)
     }
 
     @Test func aFixThatCannotBeMadeChangesNothing() async throws {

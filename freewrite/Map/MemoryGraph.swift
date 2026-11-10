@@ -2,7 +2,12 @@
 //  MemoryGraph.swift
 //  Dear Diary
 //
-//  The map's picture of memory: thoughts as dots and links as lines.
+//  The map's picture of memory: dots and thin lines.
+//
+//  There are two kinds of dot. A thought is a coloured dot, bigger the more
+//  entries touch it. A day is a small grey dot, one for each entry that memory
+//  has read, joined to every thought that entry touched. Thoughts are also
+//  joined to each other where the AI or the user has linked them.
 //
 //  It is built fresh from the thought notes every time the map opens, so the
 //  notes stay the single source of truth. Only the positions are remembered,
@@ -12,19 +17,34 @@
 import Foundation
 import SwiftUI
 
-/// One thought on the map.
+/// One dot on the map: a thought, or a day.
 struct GraphNode: Equatable, Identifiable {
+    /// A thought's id, or "day:" and the entry's id for a day.
     let id: String
+    /// A thought's name, or the day written out in full.
     var label: String
-    var kind: ThoughtKind
-    /// How many different entries touched this thought. Decides the size of the dot.
+    /// The kind of thought. Nil for a day.
+    var kind: ThoughtKind?
+    /// For a thought, how many different entries touched it (this decides its size).
+    /// For a day, how many thoughts it touched.
     var weight: Int
     /// Where the dot sits, in the map's own coordinates (the middle of the map is zero).
     var position: CGPoint
+    /// For a day: the entry written that day.
+    var entryID: UUID? = nil
+    /// For a day: the date, as yyyy-MM-dd.
+    var date: String? = nil
 
-    /// The size of the dot. It grows with how often the thought recurs, gently, up to a limit.
+    var isDay: Bool { entryID != nil }
+
+    static func dayID(_ entryID: UUID) -> String {
+        "day:\(entryID.uuidString)"
+    }
+
+    /// The size of the dot. A thought grows with how often it recurs, gently, up to a limit.
+    /// A day is always small.
     var radius: CGFloat {
-        min(20, 5 + 2.5 * CGFloat(Double(max(weight, 1)).squareRoot()))
+        isDay ? 2.8 : min(22, 2.6 + 2.6 * CGFloat(Double(max(weight, 1)).squareRoot()))
     }
 }
 
@@ -38,6 +58,8 @@ struct GraphEdge: Equatable, Identifiable {
     var count: Int
     /// The reasons given, without repeats.
     var reasons: [String]
+    /// True for the line between a day and a thought it touched.
+    var isDayLink = false
 
     static func id(_ one: String, _ other: String) -> String {
         one < other ? "\(one)|\(other)" : "\(other)|\(one)"
@@ -49,6 +71,9 @@ struct MemoryGraph: Equatable {
     var edges: [GraphEdge] = []
 
     var isEmpty: Bool { nodes.isEmpty }
+
+    var thoughts: [GraphNode] { nodes.filter { !$0.isDay } }
+    var days: [GraphNode] { nodes.filter(\.isDay) }
 
     /// For each thought, the thoughts it is linked to.
     var neighbours: [String: Set<String>] {
@@ -68,7 +93,7 @@ enum GraphBuilder {
     static func build(from memory: MemorySnapshot, saved: [String: CGPoint]) -> (graph: MemoryGraph, unplaced: Set<String>) {
         var unplaced: Set<String> = []
 
-        let nodes = memory.thoughts.values
+        var nodes = memory.thoughts.values
             .sorted { $0.id < $1.id }
             .map { thought -> GraphNode in
                 if saved[thought.id] == nil {
@@ -119,6 +144,45 @@ enum GraphBuilder {
                     edge.reasons.append(link.reason)
                 }
                 edges[id] = edge
+            }
+        }
+
+        // Days: one small dot for each entry memory has read, joined to the thoughts it touched.
+        var touchedBy: [UUID: (date: String, thoughts: Set<String>)] = [:]
+        for thought in memory.thoughts.values {
+            for item in thought.evidence {
+                var day = touchedBy[item.entryID] ?? (item.date, [])
+                // One entry has one date. If notes ever disagree, the earliest is used,
+                // so the picture never depends on the order the notes were read in.
+                day.date = min(day.date, item.date)
+                day.thoughts.insert(thought.id)
+                touchedBy[item.entryID] = day
+            }
+        }
+        for (entryID, day) in touchedBy.sorted(by: { ($0.value.date, $0.key.uuidString) < ($1.value.date, $1.key.uuidString) }) {
+            let id = GraphNode.dayID(entryID)
+            if saved[id] == nil {
+                unplaced.insert(id)
+            }
+            nodes.append(GraphNode(
+                id: id,
+                label: Prompts.longDay(day.date),
+                kind: nil,
+                weight: day.thoughts.count,
+                position: saved[id] ?? .zero,
+                entryID: entryID,
+                date: day.date
+            ))
+            for thoughtID in day.thoughts.sorted() {
+                let edgeID = GraphEdge.id(id, thoughtID)
+                edges[edgeID] = GraphEdge(
+                    id: edgeID,
+                    first: min(id, thoughtID),
+                    second: max(id, thoughtID),
+                    count: 1,
+                    reasons: [],
+                    isDayLink: true
+                )
             }
         }
 
@@ -175,7 +239,7 @@ extension MemoryStore {
                 GraphFile.Node(
                     id: $0.id,
                     label: $0.label,
-                    kind: $0.kind.rawValue,
+                    kind: $0.kind?.rawValue ?? "day",
                     weight: $0.weight,
                     x: (Double($0.position.x) * 10).rounded() / 10,
                     y: (Double($0.position.y) * 10).rounded() / 10

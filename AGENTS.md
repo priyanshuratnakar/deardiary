@@ -198,7 +198,7 @@ How it works (keep these when changing it):
 Changes in `ContentView.swift` (all marked with a "Dear Diary" comment):
 
 1. One `@State` line, `showingMap`.
-2. The "Map" word in the bottom bar after Talk, shown when `talk.isAvailable` (AI on and a key saved).
+2. The "Map" word in the bottom bar after Talk, shown when `talk.isAvailable` (AI on and a key saved). Since M9 the word is "Memory" and is always shown.
 3. A second `.overlay` that hosts `MapView` over the whole window, the way the video recorder is shown. Its `onOpenEntry` saves the open entry, then selects and loads the chosen one, as a click in History does.
 
 Rename, merge, delete and link editing were added in M6, below.
@@ -339,7 +339,7 @@ Rules the code follows (keep them when changing it):
 2. **The model list obeys the same gates.** `ModelCatalog` asks for nothing while AI is off or while a key or an address is missing. Opening Settings with AI off makes no network request, not even to this Mac.
 3. **Models are picked from the service's own list.** The one exception is "Other" when the service has no list to give: then the name is typed, and Settings says why.
 4. **On this Mac, the first model found is used** until the user picks another, and a model that has been removed from Ollama is replaced. For the other services no model is chosen on the user's behalf.
-5. **Talk and Map show when the chosen service is ready** (`AISettings.isReady`: AI on, a key if the service needs one, an address for Other, a talk model). `TalkController` follows `AISettings.readiness`, which announces changes at once. Memory needs a memory model as well (`memoryAllowed()`).
+5. **Talk shows when the chosen service is ready** (so did Map until M9, which made it always shown) (`AISettings.isReady`: AI on, a key if the service needs one, an address for Other, a talk model). `TalkController` follows `AISettings.readiness`, which announces changes at once. Memory needs a memory model as well (`memoryAllowed()`).
 6. **Optional parts are dropped, once, if a model rejects them.** A request refused with HTTP 400 is sent again without the required JSON shape (and, for the OpenAI format, without the ceiling on the reply), and that model is remembered for the rest of the run. The prompts already describe the shape and the parsers are strict, so a reply in the wrong shape is still refused.
 7. **Only Claude gets the retry on a declined reply** (`retryIfDeclined`). The other clients ignore it.
 8. **Model names still live only in `AISettings`**, and now only as Claude's two defaults.
@@ -350,6 +350,43 @@ Plain HTTP to `localhost` works from the sandboxed app with the entitlement it a
 Messages: every line that used to say "Claude" now names the service in use. `docs/messages.md` lists them all.
 
 Tests: `ProviderTests.swift` (the settings for each service, the gates, both new clients, Claude's model list, the router, the model catalogue, the thinking filter, messages per service) and more pictures in `SettingsSnapshotTests.swift` (every service and the states in between). `StubURLProtocol` can now keep canned replies apart by host (`install(forHost:)`), so the suites for different clients run side by side. `SettingsBox` in `ProviderTestSupport.swift` gives throwaway settings with their own Keychain items. Nothing has been tried against a real OpenAI or Ollama server.
+
+### M9: memory you can see
+
+The second milestone of the second round. The map became the "Memory" screen: always reachable, and drawn as a dense graph of thoughts and days in the style of the owner's reference pictures (many small dots, thin straight lines, busy thoughts with fans of days around them, a round cloud). The code keeps the name "Map" (`MapView`, `MapModel` and so on); only the word the user sees changed.
+
+**Always there.** `MapWordButton` now reads "Memory" and is always in the bottom bar, after Talk or Chat. The overlay opens whatever the state of AI. Reading the memory folder needs no AI, so memory that already exists can be looked at, and fixed, with AI off. Opening it still nudges the memory engine, which does nothing while memory is off. This is the one exception to "nothing new on the page with AI off", and it is written into the PRD's second round.
+
+**When there is nothing to show**, `MapEmptyReason` picks one plain line: no AI set up (with the word "Set it up in Settings"), memory switched off ("Open Settings"), or memory on and simply empty. The words open the Settings window (`openSettings`).
+
+**Thoughts and days** (`MemoryGraph.swift`):
+
+- A thought is a coloured dot, as before. Its size grows with how many entries touched it: small for a thought mentioned once, large for one that keeps coming back.
+- A day is a small grey dot: one for each entry that appears in any thought's quoted lines, joined to every thought that entry touched. `GraphNode.kind` is nil for a day, `entryID` and `date` are set, and its id is "day:" plus the entry's id (`GraphNode.dayID`). `GraphEdge.isDayLink` marks the line from a day to a thought.
+- Days are worked out from the thought notes every time, like everything else on the map. Nothing new is stored except their positions in `graph.json` (kind "day").
+- If notes ever disagree about an entry's date, the earliest is used, so the picture never depends on the order the notes were read in.
+
+**The layout** (`GraphLayout.swift`) still settles once, stays still, places only dots that have no remembered position and gives the same picture for the same input. What changed:
+
+- Each dot has a weight: a day is light, a thought is heavier the more lines it has. Heavier dots push harder.
+- Nearby dots push apart; beyond `reach` they do not. Dots are sorted into a grid of squares (`Squares`) so each is compared only with those near it. This is what keeps a journal of several hundred dots quick to settle.
+- Busy thoughts (six lines or more) also push each other from any distance, so each ends up with its own part of the map instead of all crowding the middle.
+- The line from a day to a thought likes to be longer the busier the thought, so its days fit in a ring around it.
+- A new day starts beside the thoughts it touched.
+
+**Drawing** (`MapView.swift`): thin straight lines, fainter from a day to a thought than between two thoughts; days drawn first, thoughts on top. Names: thoughts in order of importance as before; on a crowded map zoomed out, a thought that came up only once is not named; a day is named (with its date in full) only while it is under the pointer or selected. The bar shows a count ("179 thoughts · 198 days") while nothing is selected, and the legend gains "Day".
+
+**A day's panel.** Clicking a day selects `.day(entryID)`. The panel (`MapDayDetail`) shows the date, what the AI noted about the entry as a whole (from its digest), the thoughts it touched with the lines behind each, and "Open this entry". A day is the user's own writing, so it has no fix words. The line from a day to a thought cannot be opened. A day can be dragged to move it, but is never a target for a link or a merge; while another thought is being picked, a click that lands on a day is passed over rather than backing out.
+
+**Linking by dragging.** Dragging a dot still moves it. Dropping one thought on another links them instead: while it is held over the other, the target gets a ring, a dotted circle marks where the dot came from and one line says what letting go will do (`dropTarget`, `draggedThought`, `dragStart`). On letting go the dot returns to its place and the panel asks how the two are linked, exactly as "Link to…" does.
+
+**Find.** The word "Find" in the map's bar turns into a line to type in (`isFinding`, `query`). Thoughts whose name or other names contain what was typed stay bright and named and the rest fade (`matches`: capitals and accents ignored, the most recurring first, days never match). Return opens the first match and brings it into view. Typing again closes whatever was open. Esc backs out of a fix first, then out of Find, then closes the screen.
+
+Changes in `ContentView.swift`: two of the existing "Dear Diary" hooks were loosened. The word is no longer inside `if talk.isAvailable`, and the overlay is shown on `showingMap` alone.
+
+A note for later: curved links and small marks drifting along the selected thought's links were built first and then taken out, because the owner's references have straight lines and nothing moving. Do not bring them back without asking.
+
+Tests: `MemoryMapTests.swift` (the layout, days, dragging to link, Find, the empty states), more in `MapTests.swift` (days in the graph), and `MapSnapshotTests.swift` redrawn. `MapFixtures.journal` in `MapTestSupport.swift` makes a memory shaped like a real journal: a dozen thoughts that keep coming back, some that return now and then, and many mentioned once. Use it, not `crowd`, to judge how the map looks.
 
 ## Product Vision & User Experience
 

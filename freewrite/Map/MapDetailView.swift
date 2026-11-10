@@ -40,6 +40,10 @@ struct MapDetailView: View {
                         if let detail = model.linkDetail(id) {
                             link(detail)
                         }
+                    case .day(let entryID):
+                        if let detail = model.dayDetail(entryID) {
+                            day(detail)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -59,6 +63,11 @@ struct MapDetailView: View {
                 case .link(let id):
                     if let detail = model.linkDetail(id) {
                         linkFixes(detail)
+                    }
+                case .day(let entryID):
+                    // A day is your own writing, so there is nothing to fix: only a way to read it.
+                    MapWord(title: "Open this entry", style: style) {
+                        onOpenEntry(entryID)
                     }
                 }
             }
@@ -253,6 +262,49 @@ struct MapDetailView: View {
         } else {
             MapWord(title: "Remove link", style: style) {
                 model.pending = .confirmingRemoveLink(detail.id)
+            }
+        }
+    }
+
+    // MARK: - A day
+
+    @ViewBuilder
+    private func day(_ detail: MapDayDetail) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(Prompts.longDay(detail.date))
+                .font(.custom(style.fontName, size: 20))
+                .foregroundColor(style.bodyColor)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(style.dayColor)
+                    .frame(width: 8, height: 8)
+                small("day · touched \(detail.thoughts.count) \(detail.thoughts.count == 1 ? "thought" : "thoughts")")
+            }
+        }
+
+        if let summary = detail.summary, !summary.isEmpty {
+            paragraph(summary)
+        }
+
+        if !detail.thoughts.isEmpty {
+            section("What it touched") {
+                ForEach(detail.thoughts) { touched in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(style.color(for: touched.kind))
+                                .frame(width: 8, height: 8)
+                            MapWord(title: touched.label, style: style) {
+                                model.selection = .thought(touched.thoughtID)
+                            }
+                        }
+                        ForEach(Array(touched.quotes.enumerated()), id: \.offset) { _, quote in
+                            paragraph("“\(quote)”")
+                        }
+                    }
+                }
             }
         }
     }
