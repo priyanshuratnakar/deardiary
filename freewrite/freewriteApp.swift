@@ -30,7 +30,8 @@ struct freewriteApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .toolbar(.hidden, for: .windowToolbar)
+                // Dear Diary: freewrite hid the window toolbar here, which also hid the red, yellow
+                // and green buttons. They show now, and WindowButtons lets them step back with the bar.
                 .preferredColorScheme(colorSchemeString == "dark" ? .dark : .light)
         }
         .windowStyle(.hiddenTitleBar)

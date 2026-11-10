@@ -121,6 +121,36 @@ What each service is, under "Runs on":
 | Claude | Claude, through your own API key from Anthropic. Entry text is sent to Anthropic when you talk or build memory. |
 | Other | Any service that speaks the OpenAI chat format, at an address you give. Entry text is sent to that address when you talk or build memory. |
 
+## The page
+
+Files: `freewrite/Page/OpeningLines.swift` (the opening lines) and `freewrite/ContentView.swift`, `freewrite/Page/BarIcon.swift` (the names of the marks).
+
+The grey line on an empty page, one picked at random for each new entry:
+
+- what's up, bbg
+- how's the day, darling
+- ok, tell me everything
+- spill it
+- hi you. what happened?
+- what's the tea today
+- so… how are we feeling
+- go on, I'm all ears
+
+The name shown when the pointer rests on a mark in the bar:
+
+| Mark | Name |
+| --- | --- |
+| History | History |
+| The number | Text size |
+| Aa | Font: Lato (or Arial, System, Serif, or the surprise font's own name) |
+| Camera | Record a video |
+| Speech bubble | Talk, or Chat when AI is not set up |
+| Joined dots | Memory |
+| Backspace key | Backspace is On · Backspace is Off |
+| Arrows | Fullscreen · Leave fullscreen |
+| Pencil | New Entry |
+| Moon or sun | Dark · Light |
+
 ## Bringing entries from freewrite
 
 File: `freewrite/Settings/JournalImporter.swift` (the lines) and `freewrite/Settings/SettingsView.swift` (the section).

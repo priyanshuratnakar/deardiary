@@ -415,8 +415,7 @@ struct VersionsIconButton: View {
     var body: some View {
         if index.entries.contains(entryID) {
             Button(action: action) {
-                Image(systemName: "arrow.uturn.backward.circle")
-                    .font(.system(size: 11))
+                BarIcon(kind: .clock, size: 13)
                     .foregroundColor(isHovering ? (isLight ? .black : .white) : (isLight ? .gray : .gray.opacity(0.8)))
             }
             .buttonStyle(.plain)

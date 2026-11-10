@@ -490,7 +490,9 @@ struct MapWordButton: View {
         Button("Memory") {
             isShowingMap = true
         }
-        .buttonStyle(.plain)
+        // A mark in place of the word: a thought with the days around it.
+        .buttonStyle(BarMark(.memory))
+        .barName("Memory")
         .foregroundColor(isHovering ? textHoverColor : textColor)
         .onHover { hovering in
             isHovering = hovering

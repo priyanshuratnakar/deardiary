@@ -111,6 +111,8 @@ struct ContentView: View {
     @State private var showingChatMenu = false
     @State private var chatMenuAnchor: CGPoint = .zero
     @State private var showingSidebar = false  // Add this state variable
+    // Dear Diary: lets a picture test draw the window with History open. The app itself never sets it.
+    var opensWithHistory = false
     @State private var hoveredTrashId: UUID? = nil
     @State private var hoveredExportId: UUID? = nil
     @State private var placeholderText: String = ""  // Add this line
@@ -146,16 +148,8 @@ struct ContentView: View {
     let availableFonts = NSFontManager.shared.availableFontFamilies
     let standardFonts = ["Lato-Regular", "Arial", ".AppleSystemUIFont", "Times New Roman"]
     let fontSizes: [CGFloat] = [16, 18, 20, 22, 24, 26]
-    let placeholderOptions = [
-        "Begin writing",
-        "Pick a thought and go",
-        "Start typing",
-        "What's on your mind",
-        "Just start",
-        "Type your first thought",
-        "Start with one sentence",
-        "Just say it"
-    ]
+    // Dear Diary: the opening lines are Dear Diary's own (freewrite's were "Begin writing" and the like).
+    let placeholderOptions = OpeningLines.all
     
     // Add file manager and save timer
     private let fileManager = FileManager.default
@@ -851,7 +845,8 @@ struct ContentView: View {
     }
     
     var fontSizeButtonTitle: String {
-        return "\(Int(fontSize))px"
+        // Dear Diary: the number alone, to sit beside the marks in the bar.
+        return "\(Int(fontSize))"
     }
     
     // Add a color utility computed property
@@ -872,6 +867,190 @@ struct ContentView: View {
         let isViewingVideoEntry = currentVideoURL != nil
         
         HStack(spacing: 0) {
+            // Dear Diary: History sits on the left, like Notes and Claude. This is freewrite's own
+            // sidebar, moved here from the right end of this row, with the dividing line after it.
+            if showingSidebar {
+                VStack(spacing: 0) {
+                    // Header
+                    Button(action: {
+                        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: getDocumentsDirectory().path)
+                    }) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 4) {
+                                    Text("History")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(isHoveringHistory ? textHoverColor : textColor)
+                                    BarIcon(kind: .arrowUpRight, size: 11) // Dear Diary: drawn to match Pika's icons
+                                        .foregroundColor(isHoveringHistory ? textHoverColor : textColor)
+                                }
+                                Text(getDocumentsDirectory().path)
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .onHover { hovering in
+                        isHoveringHistory = hovering
+                    }
+                    
+                    Divider()
+                    
+                    // Entries List
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(entries) { entry in
+                                Button(action: {
+                                    if selectedEntryId != entry.id {
+                                        historyDebug("ROW TAP \(debugEntrySummary(entry))")
+                                        // Save current entry before switching
+                                        if let currentId = selectedEntryId,
+                                           let currentEntry = entries.first(where: { $0.id == currentId }),
+                                           currentEntry.entryType == .text {
+                                            saveEntry(entry: currentEntry)
+                                        }
+
+                                        // Re-resolve from source of truth after any state mutations.
+                                        guard let targetEntry = entries.first(where: { $0.id == entry.id }) else {
+                                            historyDebug("ROW TAP target missing id=\(entry.id.uuidString)")
+                                            return
+                                        }
+                                        selectedEntryId = targetEntry.id
+                                        historyDebug("ROW TAP resolved target \(debugEntrySummary(targetEntry))")
+                                        loadEntry(entry: targetEntry)
+                                    }
+                                }) {
+                                    HStack(alignment: .top) {
+                                        // Show video thumbnail for video entries
+                                        if let videoFilename = resolvedVideoFilename(for: entry) {
+                                            if let thumbnail = loadThumbnailImage(for: videoFilename) {
+                                                Image(nsImage: thumbnail)
+                                                    .resizable()
+                                                    .aspectRatio(contentMode: .fill)
+                                                    .frame(width: 40, height: 40)
+                                                    .cornerRadius(4)
+                                                    .overlay(
+                                                        Image(systemName: "play.circle.fill")
+                                                            .foregroundColor(.white)
+                                                            .font(.system(size: 16))
+                                                    )
+                                            } else {
+                                                // Fallback if thumbnail generation fails
+                                                ZStack {
+                                                    Rectangle()
+                                                        .fill(Color.gray.opacity(0.3))
+                                                        .frame(width: 40, height: 40)
+                                                        .cornerRadius(4)
+                                                    Image(systemName: "video.fill")
+                                                        .foregroundColor(.gray)
+                                                        .font(.system(size: 16))
+                                                }
+                                            }
+                                        }
+
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            HStack {
+                                                Text(entry.previewText)
+                                                    .font(.system(size: 13))
+                                                    .lineLimit(1)
+                                                    .foregroundColor(.primary)
+
+                                                Spacer()
+                                                
+                                                // Export/Trash icons that appear on hover
+                                                if hoveredEntryId == entry.id {
+                                                    HStack(spacing: 8) {
+                                                        VersionsIconButton(entryID: entry.id, isLight: colorScheme == .light) { versionsEntryId = entry.id } // Dear Diary: earlier versions of this entry
+                                                        // Export PDF button
+                                                        Button(action: {
+                                                            exportEntryAsPDF(entry: entry)
+                                                        }) {
+                                                            BarIcon(kind: .download, size: 13) // Dear Diary: Pika's in place of Apple's
+                                                                .foregroundColor(hoveredExportId == entry.id ? 
+                                                                    (colorScheme == .light ? .black : .white) : 
+                                                                    (colorScheme == .light ? .gray : .gray.opacity(0.8)))
+                                                        }
+                                                        .buttonStyle(.plain)
+                                                        .help("Export entry as PDF")
+                                                        .onHover { hovering in
+                                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                                hoveredExportId = hovering ? entry.id : nil
+                                                            }
+                                                            if hovering {
+                                                                NSCursor.pointingHand.push()
+                                                            } else {
+                                                                NSCursor.pop()
+                                                            }
+                                                        }
+                                                        
+                                                        // Trash icon
+                                                        Button(action: {
+                                                            deleteEntry(entry: entry)
+                                                        }) {
+                                                            BarIcon(kind: .trash, size: 13) // Dear Diary: Pika's in place of Apple's
+                                                                .foregroundColor(hoveredTrashId == entry.id ? .red : .gray)
+                                                        }
+                                                        .buttonStyle(.plain)
+                                                        .onHover { hovering in
+                                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                                hoveredTrashId = hovering ? entry.id : nil
+                                                            }
+                                                            if hovering {
+                                                                NSCursor.pointingHand.push()
+                                                            } else {
+                                                                NSCursor.pop()
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            
+                                            Text(entry.date)
+                                                .font(.system(size: 12))
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 4)
+                                            .fill(backgroundColor(for: entry))
+                                    )
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                                .contentShape(Rectangle())
+                                .onHover { hovering in
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        hoveredEntryId = hovering ? entry.id : nil
+                                    }
+                                }
+                                .onAppear {
+                                    NSCursor.pop()  // Reset cursor when button appears
+                                }
+                                .help("Click to select this entry")  // Add tooltip
+                                
+                                if entry.id != entries.last?.id {
+                                    Divider()
+                                }
+                            }
+                        }
+                    }
+                    .scrollIndicators(.never)
+                }
+                .frame(width: 200)
+                // Dear Diary: the colour runs up behind the window buttons.
+                .background(Color(colorScheme == .light ? .white : NSColor.black).ignoresSafeArea())
+
+                Divider()
+                    .ignoresSafeArea()
+            }
+
             // Main content
             ZStack {
                 Color(colorScheme == .light ? .white : .black)
@@ -933,6 +1112,14 @@ struct ContentView: View {
                     HStack {
                         if isViewingVideoEntry {
                             HStack(spacing: 8) {
+                                // Dear Diary: History opens on the left, so its mark sits at the left end of the bar.
+                                HistoryMarkButton(isShowing: $showingSidebar, textColor: textColor, textHoverColor: textHoverColor, isHoveringBottomNav: $isHoveringBottomNav)
+
+                                if selectedVideoHasTranscript {
+                                    Text("•")
+                                        .foregroundColor(.gray)
+                                }
+
                                 if selectedVideoHasTranscript {
                                     Button(action: {
                                         copyTranscriptForSelectedVideoEntry()
@@ -961,6 +1148,12 @@ struct ContentView: View {
                         } else {
                             // Font buttons (left)
                             HStack(spacing: 8) {
+                                // Dear Diary: History opens on the left, so its mark sits at the left end of the bar.
+                                HistoryMarkButton(isShowing: $showingSidebar, textColor: textColor, textHoverColor: textHoverColor, isHoveringBottomNav: $isHoveringBottomNav)
+
+                                Text("•")
+                                    .foregroundColor(.gray)
+
                                 Button(fontSizeButtonTitle) {
                                     if let currentIndex = fontSizes.firstIndex(of: fontSize) {
                                         let nextIndex = (currentIndex + 1) % fontSizes.count
@@ -969,6 +1162,7 @@ struct ContentView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .foregroundColor(isHoveringSize ? textHoverColor : textColor)
+                                .barName("Text size")
                                 .onHover { hovering in
                                     isHoveringSize = hovering
                                     isHoveringBottomNav = hovering
@@ -982,99 +1176,9 @@ struct ContentView: View {
                                 Text("•")
                                     .foregroundColor(.gray)
                                 
-                                Button("Lato") {
-                                    selectedFont = "Lato-Regular"
-                                    currentRandomFont = ""
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundColor(hoveredFont == "Lato" ? textHoverColor : textColor)
-                                .onHover { hovering in
-                                    hoveredFont = hovering ? "Lato" : nil
-                                    isHoveringBottomNav = hovering
-                                    if hovering {
-                                        NSCursor.pointingHand.push()
-                                    } else {
-                                        NSCursor.pop()
-                                    }
-                                }
-                                
-                                Text("•")
-                                    .foregroundColor(.gray)
-                                
-                                Button("Arial") {
-                                    selectedFont = "Arial"
-                                    currentRandomFont = ""
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundColor(hoveredFont == "Arial" ? textHoverColor : textColor)
-                                .onHover { hovering in
-                                    hoveredFont = hovering ? "Arial" : nil
-                                    isHoveringBottomNav = hovering
-                                    if hovering {
-                                        NSCursor.pointingHand.push()
-                                    } else {
-                                        NSCursor.pop()
-                                    }
-                                }
-                                
-                                Text("•")
-                                    .foregroundColor(.gray)
-                                
-                                Button("System") {
-                                    selectedFont = ".AppleSystemUIFont"
-                                    currentRandomFont = ""
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundColor(hoveredFont == "System" ? textHoverColor : textColor)
-                                .onHover { hovering in
-                                    hoveredFont = hovering ? "System" : nil
-                                    isHoveringBottomNav = hovering
-                                    if hovering {
-                                        NSCursor.pointingHand.push()
-                                    } else {
-                                        NSCursor.pop()
-                                    }
-                                }
-                                
-                                Text("•")
-                                    .foregroundColor(.gray)
-                                
-                                Button("Serif") {
-                                    selectedFont = "Times New Roman"
-                                    currentRandomFont = ""
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundColor(hoveredFont == "Serif" ? textHoverColor : textColor)
-                                .onHover { hovering in
-                                    hoveredFont = hovering ? "Serif" : nil
-                                    isHoveringBottomNav = hovering
-                                    if hovering {
-                                        NSCursor.pointingHand.push()
-                                    } else {
-                                        NSCursor.pop()
-                                    }
-                                }
-                                
-                                Text("•")
-                                    .foregroundColor(.gray)
-                                
-                                Button(randomButtonTitle) {
-                                    if let randomFont = availableFonts.randomElement() {
-                                        selectedFont = randomFont
-                                        currentRandomFont = randomFont
-                                    }
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundColor(hoveredFont == "Random" ? textHoverColor : textColor)
-                                .onHover { hovering in
-                                    hoveredFont = hovering ? "Random" : nil
-                                    isHoveringBottomNav = hovering
-                                    if hovering {
-                                        NSCursor.pointingHand.push()
-                                    } else {
-                                        NSCursor.pop()
-                                    }
-                                }
+                                // Dear Diary: one font mark in place of freewrite's five words. Each click moves on:
+                                // Lato, Arial, System, Serif, a surprise, then round again.
+                                FontCycleButton(selectedFont: $selectedFont, currentRandomFont: $currentRandomFont, availableFonts: availableFonts, textColor: textColor, textHoverColor: textHoverColor, isHoveringBottomNav: $isHoveringBottomNav)
                             }
                             .padding(8)
                             .cornerRadius(6)
@@ -1143,13 +1247,15 @@ struct ContentView: View {
                                             .controlSize(.small)
                                             .tint(isHoveringVideoButton ? textHoverColor : textColor)
                                     } else {
-                                        Image(systemName: "video.fill")
+                                        // Dear Diary: Pika's camera in place of Apple's.
+                                        BarIcon(kind: .video)
                                             .foregroundColor(isHoveringVideoButton ? textHoverColor : textColor)
                                     }
                                 }
-                                .frame(width: 14, height: 14)
+                                .frame(width: 16, height: 16)
                             }
                             .buttonStyle(.plain)
+                            .barName("Record a video")
                             .onHover { hovering in
                                 isHoveringVideoButton = hovering
                                 isHoveringBottomNav = hovering
@@ -1229,7 +1335,8 @@ struct ContentView: View {
                                 // Ensure didCopyPrompt is reset when opening the menu
                                 didCopyPrompt = false
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(BarMark(.chat)) // Dear Diary: a mark in place of the word
+                            .barName("Chat")
                             .foregroundColor(isHoveringChat ? textHoverColor : textColor)
                             .onHover { hovering in
                                 isHoveringChat = hovering
@@ -1393,10 +1500,12 @@ struct ContentView: View {
                                 Button(action: {
                                     backspaceDisabled.toggle()
                                 }) {
-                                    Text(backspaceDisabled ? "Backspace is Off" : "Backspace is On")
+                                    // Dear Diary: a mark in place of the words, struck through while backspace is off.
+                                    BarIcon(kind: backspaceDisabled ? .backspaceOff : .backspace)
                                         .foregroundColor(isHoveringBackspaceToggle ? textHoverColor : textColor)
                                 }
                                 .buttonStyle(.plain)
+                                .barName(backspaceDisabled ? "Backspace is Off" : "Backspace is On")
                                 .onHover { hovering in
                                     isHoveringBackspaceToggle = hovering
                                     isHoveringBottomNav = hovering
@@ -1416,7 +1525,8 @@ struct ContentView: View {
                                     window.toggleFullScreen(nil)
                                 }
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(BarMark(isFullscreen ? .collapse : .expand)) // Dear Diary: a mark in place of the word
+                            .barName(isFullscreen ? "Leave fullscreen" : "Fullscreen")
                             .foregroundColor(isHoveringFullscreen ? textHoverColor : textColor)
                             .onHover { hovering in
                                 isHoveringFullscreen = hovering
@@ -1434,10 +1544,11 @@ struct ContentView: View {
                             Button(action: {
                                 createNewEntry()
                             }) {
-                                Text("New Entry")
-                                    .font(.system(size: 13))
+                                // Dear Diary: a mark in place of the words.
+                                BarIcon(kind: .pencil)
                             }
                             .buttonStyle(.plain)
+                            .barName("New Entry")
                             .foregroundColor(isHoveringNewEntry ? textHoverColor : textColor)
                             .onHover { hovering in
                                 isHoveringNewEntry = hovering
@@ -1458,10 +1569,12 @@ struct ContentView: View {
                                 // Save preference
                                 UserDefaults.standard.set(colorScheme == .light ? "light" : "dark", forKey: "colorScheme")
                             }) {
-                                Image(systemName: colorScheme == .light ? "moon.fill" : "sun.max.fill")
+                                // Dear Diary: Pika's moon and sun in place of Apple's.
+                                BarIcon(kind: colorScheme == .light ? .moon : .sun)
                                     .foregroundColor(isHoveringThemeToggle ? textHoverColor : textColor)
                             }
                             .buttonStyle(.plain)
+                            .barName(colorScheme == .light ? "Dark" : "Light")
                             .onHover { hovering in
                                 isHoveringThemeToggle = hovering
                                 isHoveringBottomNav = hovering
@@ -1472,28 +1585,8 @@ struct ContentView: View {
                                 }
                             }
 
-                            Text("•")
-                                .foregroundColor(.gray)
 
-                            // Version history button
-                            Button(action: {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    showingSidebar.toggle()
-                                }
-                            }) {
-                                Image(systemName: "clock.arrow.circlepath")
-                                    .foregroundColor(isHoveringClock ? textHoverColor : textColor)
-                            }
-                            .buttonStyle(.plain)
-                            .onHover { hovering in
-                                isHoveringClock = hovering
-                                isHoveringBottomNav = hovering
-                                if hovering {
-                                    NSCursor.pointingHand.push()
-                                } else {
-                                    NSCursor.pop()
-                                }
-                            }
+                            // Dear Diary: the History mark moved to the left end of the bar, with History itself.
                         }
                         .padding(8)
                         .cornerRadius(6)
@@ -1533,190 +1626,6 @@ struct ContentView: View {
                     colorScheme: colorScheme
                 )
                 .frame(width: 340)
-            }
-
-            // Right sidebar
-            if showingSidebar {
-                Divider()
-                
-                VStack(spacing: 0) {
-                    // Header
-                    Button(action: {
-                        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: getDocumentsDirectory().path)
-                    }) {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack(spacing: 4) {
-                                    Text("History")
-                                        .font(.system(size: 13))
-                                        .foregroundColor(isHoveringHistory ? textHoverColor : textColor)
-                                    Image(systemName: "arrow.up.right")
-                                        .font(.system(size: 10))
-                                        .foregroundColor(isHoveringHistory ? textHoverColor : textColor)
-                                }
-                                Text(getDocumentsDirectory().path)
-                                    .font(.system(size: 10))
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(1)
-                            }
-                            Spacer()
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .onHover { hovering in
-                        isHoveringHistory = hovering
-                    }
-                    
-                    Divider()
-                    
-                    // Entries List
-                    ScrollView {
-                        LazyVStack(spacing: 0) {
-                            ForEach(entries) { entry in
-                                Button(action: {
-                                    if selectedEntryId != entry.id {
-                                        historyDebug("ROW TAP \(debugEntrySummary(entry))")
-                                        // Save current entry before switching
-                                        if let currentId = selectedEntryId,
-                                           let currentEntry = entries.first(where: { $0.id == currentId }),
-                                           currentEntry.entryType == .text {
-                                            saveEntry(entry: currentEntry)
-                                        }
-
-                                        // Re-resolve from source of truth after any state mutations.
-                                        guard let targetEntry = entries.first(where: { $0.id == entry.id }) else {
-                                            historyDebug("ROW TAP target missing id=\(entry.id.uuidString)")
-                                            return
-                                        }
-                                        selectedEntryId = targetEntry.id
-                                        historyDebug("ROW TAP resolved target \(debugEntrySummary(targetEntry))")
-                                        loadEntry(entry: targetEntry)
-                                    }
-                                }) {
-                                    HStack(alignment: .top) {
-                                        // Show video thumbnail for video entries
-                                        if let videoFilename = resolvedVideoFilename(for: entry) {
-                                            if let thumbnail = loadThumbnailImage(for: videoFilename) {
-                                                Image(nsImage: thumbnail)
-                                                    .resizable()
-                                                    .aspectRatio(contentMode: .fill)
-                                                    .frame(width: 40, height: 40)
-                                                    .cornerRadius(4)
-                                                    .overlay(
-                                                        Image(systemName: "play.circle.fill")
-                                                            .foregroundColor(.white)
-                                                            .font(.system(size: 16))
-                                                    )
-                                            } else {
-                                                // Fallback if thumbnail generation fails
-                                                ZStack {
-                                                    Rectangle()
-                                                        .fill(Color.gray.opacity(0.3))
-                                                        .frame(width: 40, height: 40)
-                                                        .cornerRadius(4)
-                                                    Image(systemName: "video.fill")
-                                                        .foregroundColor(.gray)
-                                                        .font(.system(size: 16))
-                                                }
-                                            }
-                                        }
-
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            HStack {
-                                                Text(entry.previewText)
-                                                    .font(.system(size: 13))
-                                                    .lineLimit(1)
-                                                    .foregroundColor(.primary)
-
-                                                Spacer()
-                                                
-                                                // Export/Trash icons that appear on hover
-                                                if hoveredEntryId == entry.id {
-                                                    HStack(spacing: 8) {
-                                                        VersionsIconButton(entryID: entry.id, isLight: colorScheme == .light) { versionsEntryId = entry.id } // Dear Diary: earlier versions of this entry
-                                                        // Export PDF button
-                                                        Button(action: {
-                                                            exportEntryAsPDF(entry: entry)
-                                                        }) {
-                                                            Image(systemName: "arrow.down.circle")
-                                                                .font(.system(size: 11))
-                                                                .foregroundColor(hoveredExportId == entry.id ? 
-                                                                    (colorScheme == .light ? .black : .white) : 
-                                                                    (colorScheme == .light ? .gray : .gray.opacity(0.8)))
-                                                        }
-                                                        .buttonStyle(.plain)
-                                                        .help("Export entry as PDF")
-                                                        .onHover { hovering in
-                                                            withAnimation(.easeInOut(duration: 0.2)) {
-                                                                hoveredExportId = hovering ? entry.id : nil
-                                                            }
-                                                            if hovering {
-                                                                NSCursor.pointingHand.push()
-                                                            } else {
-                                                                NSCursor.pop()
-                                                            }
-                                                        }
-                                                        
-                                                        // Trash icon
-                                                        Button(action: {
-                                                            deleteEntry(entry: entry)
-                                                        }) {
-                                                            Image(systemName: "trash")
-                                                                .font(.system(size: 11))
-                                                                .foregroundColor(hoveredTrashId == entry.id ? .red : .gray)
-                                                        }
-                                                        .buttonStyle(.plain)
-                                                        .onHover { hovering in
-                                                            withAnimation(.easeInOut(duration: 0.2)) {
-                                                                hoveredTrashId = hovering ? entry.id : nil
-                                                            }
-                                                            if hovering {
-                                                                NSCursor.pointingHand.push()
-                                                            } else {
-                                                                NSCursor.pop()
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            
-                                            Text(entry.date)
-                                                .font(.system(size: 12))
-                                                .foregroundColor(.secondary)
-                                        }
-                                    }
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 8)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 4)
-                                            .fill(backgroundColor(for: entry))
-                                    )
-                                }
-                                .buttonStyle(PlainButtonStyle())
-                                .contentShape(Rectangle())
-                                .onHover { hovering in
-                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                        hoveredEntryId = hovering ? entry.id : nil
-                                    }
-                                }
-                                .onAppear {
-                                    NSCursor.pop()  // Reset cursor when button appears
-                                }
-                                .help("Click to select this entry")  // Add tooltip
-                                
-                                if entry.id != entries.last?.id {
-                                    Divider()
-                                }
-                            }
-                        }
-                    }
-                    .scrollIndicators(.never)
-                }
-                .frame(width: 200)
-                .background(Color(colorScheme == .light ? .white : NSColor.black))
             }
         }
         .overlay {
@@ -1789,10 +1698,12 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 1100, minHeight: 600)
+        // Dear Diary: the window's red, yellow and green buttons step back with the bar.
+        .modifier(WindowButtonsFollowBar(isQuiet: bottomNavOpacity == 0 || showingVideoRecording))
         .animation(.easeInOut(duration: 0.2), value: showingSidebar)
         .preferredColorScheme(colorScheme)
         .onAppear {
-            showingSidebar = false  // Hide sidebar by default
+            showingSidebar = opensWithHistory  // Hide sidebar by default (Dear Diary: a picture test can ask for it open)
             loadExistingEntries()
         }
         .onReceive(JournalImport.shared.didCopy) { _ in

@@ -200,6 +200,9 @@ What changes:
 | M8 | Settings and any AI | You can choose a service, pick its models from a list, and see what is missing. Talk and memory work through whichever service is chosen. With AI off, the app still makes no network calls. |
 | M9 | Memory you can see | "Memory" is always in the bottom bar. The graph shows thoughts and days. Clicking a day shows what it touched and opens the entry. One thought can be dragged onto another to link them, and a thought can be found by name. |
 | M10 | First run and moving in | A first run points to setting up AI. Entries from the original freewrite app can be brought across, and they show in History at once. |
+| M11 | The page's own look | History opens on the left. The bar is small marks in place of words, with one font mark that steps through the fonts. An empty page opens on a playful line. The window shows its red, yellow and green buttons. |
+
+**A change to principle 1, made by the owner on 11 Nov 2026 (M11).** Until M10, with AI off the app looked exactly like freewrite. From M11 it behaves exactly like freewrite with AI off, and still sends nothing, but the window has Dear Diary's own look: History on the left, marks in the bar, the window buttons. The style stays freewrite's (one grey, the same type, no colour). The marks are from the free Pikaicons pack (MIT), with a few drawn to match. This also means freewrite's own bar and sidebar code is now edited, so changes from upstream to those parts are merged by hand.
 
 ## Open questions
 

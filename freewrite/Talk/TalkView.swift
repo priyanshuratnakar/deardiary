@@ -199,7 +199,9 @@ struct TalkWordButton: View {
                 talk.toggle()
             }
         }
-        .buttonStyle(.plain)
+        // A mark in place of the word, brighter while talk is on.
+        .buttonStyle(BarMark(.chat))
+        .barName("Talk")
         .foregroundColor(isHovering || talk.isOn ? textHoverColor : textColor)
         .onHover { hovering in
             isHovering = hovering

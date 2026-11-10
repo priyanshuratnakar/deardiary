@@ -23,7 +23,7 @@ This repo is **Dear Diary**, a personal fork of freewrite that adds an AI talk m
 
 ### M1: AI plumbing
 
-With AI off (the default) the app still behaves exactly like freewrite and makes no network requests. Nothing was added to the writing page.
+With AI off (the default) the app still behaves exactly like freewrite and makes no network requests. Nothing was added to the writing page. (Since M11 the page's look is Dear Diary's own; see M11.)
 
 New files (the project picks up anything under `freewrite/` automatically, no project edits needed):
 
@@ -430,6 +430,51 @@ One new hook in `ContentView.swift` (marked with a "Dear Diary" comment, approve
 Messages are in `docs/messages.md` under "Bringing entries from freewrite".
 
 Tests: `JournalImportTests.swift` (the welcome pages, looking and copying with made-up folders, the section's states and wording, and copied entries with memory) and four more pictures in `SettingsSnapshotTests.swift`. `MemorySandbox.broughtInAt` lets a memory test say which entries were copied in. Never point a test or a development run at the owner's real freewrite folder. The real folder picker, and reading freewrite's container through it, have not been tried.
+
+### M11: the page's own look
+
+The owner asked for this after M10. It changes two rules that held until then, so read this before anything above:
+
+- **With AI off the window no longer looks exactly like freewrite.** It behaves the same; the bar, History and the window buttons look different.
+- **`ContentView.swift` was edited inside freewrite's own bar and sidebar**, not only at hooks. Every edit is marked with a "Dear Diary" comment. Upstream changes to the bar or the sidebar now need merging by hand.
+
+The look is still freewrite's in spirit: the same page, the same grey, the same type, nothing coloured. Do not propose themes or a new look.
+
+**What changed on screen**
+
+- **History is on the left**, like Notes and Claude, and its mark sits at the left end of the bar (brighter while History is open). The row is now: History, a dividing line, the page, the talk column. It is freewrite's own sidebar code, moved within the row. Its colour and the dividing line run up behind the window buttons.
+- **The bar is marks, not words.** Left: History, the text size (the number alone), the font. Right: the timer, video, Talk or Chat, Memory, Backspace (struck through while off), Fullscreen (arrows turn inward while in fullscreen), New Entry, dark or light. The timer and the text size stay as numbers because the number is the information. Resting the pointer on a mark shows its name.
+- **One font mark**, "Aa" drawn in the font in use. Each click moves on: Lato, Arial, System, Serif, a surprise from the Mac's own fonts, then Lato again.
+- **The opening line** on an empty page is one of Dear Diary's own ("what's up, bbg" and the like).
+- **The window's red, yellow and green buttons show.** While a timed session has faded the bar out, or the video recorder is up, they fade out too. They come back with the bar, and whenever the pointer is over the top strip of the window.
+- **History rows** use the same family of marks for earlier versions, export and delete, and for the arrow beside "History".
+
+**Files**
+
+New folder `freewrite/Page/`:
+
+- `BarIcon.swift`: `BarIcon` (one mark, drawn in the colour of the text around it), `BarMark` (a button style that draws a mark in place of a button's words), `barName` (the name on hover and for VoiceOver), `HistoryMarkButton`, `FontCycle` and `FontCycleButton`.
+- `OpeningLines.swift`: the opening lines. The owner's to edit.
+- `WindowButtons.swift`: `WindowButtons` (shows, fades and brings back the window buttons) and `WindowButtonsFollowBar` (the one modifier `ContentView` adds).
+- `PikaIcons-LICENSE.txt`: the MIT notice for the icons. It is copied into the app.
+
+`freewrite/Assets.xcassets/Marks/` holds 15 image sets. Each is one SVG on a 24 by 24 grid, kept as a vector and drawn in one colour. (The folder is called Marks, not Icons, because freewrite's `.gitignore` has the pattern `Icon?`, which makes git ignore any folder named Icons.)
+
+**Rules the code follows (keep them when changing it)**
+
+1. **Where the icons come from.** Names that start with `pika-` are from the free Pikaicons pack, stroke style, MIT licensed. Keep `PikaIcons-LICENSE.txt` with them. Only the 221 free icons may go in this repo; Pikaicons' paid icons may not. Names that start with `dd-` were drawn for Dear Diary on the same grid (a 2 point round line), for what the free pack lacks: backspace, backspace off, the two fullscreen arrows, memory (a thought with days around it) and the small arrow.
+2. **Adding a mark** means a new image set and a new case in `BarIcon.Kind`. A test checks that every case has its picture.
+3. **freewrite's buttons keep their own code.** Where freewrite's button was a word (`Button("Chat")`, the Fullscreen button), only its `buttonStyle` changed, to `BarMark`, so what the button does, its hover colour and its pop-up are still freewrite's lines. `TalkWordButton` and `MapWordButton` keep their names and draw marks the same way.
+4. **Still Apple's symbols:** the play mark and camera on video thumbnails in History, the video recorder, and the arrow and tick in the Settings model list. Video features were not touched.
+5. **The window buttons.** `freewriteApp.swift` no longer has `.toolbar(.hidden, for: .windowToolbar)`, which is what hid them. The window already kept a 32 point strip clear at its top, so nothing moved. A hidden button takes no clicks: `WindowButtons` hides the buttons only after they have fully faded, and un-hides them before fading them in. In fullscreen it leaves them to macOS.
+6. **`ContentView.opensWithHistory`** exists so a picture test can draw the window with History open. The app never sets it.
+7. **Left in place, unused:** freewrite's `hoveredFont`, `randomButtonTitle` and `isHoveringClock`. They cost nothing and keeping them keeps the difference from upstream smaller.
+
+Changes in `ContentView.swift` (all marked): the opening lines, the text size title, the History mark at the left of the bar in both the text and the video case, the one font mark in place of five words, marks for video, Chat, Backspace, Fullscreen, New Entry and the theme, the History button removed from the right end, the sidebar moved to the left, Pika's marks in History's header and rows, `opensWithHistory`, and `WindowButtonsFollowBar`.
+
+Tests: `PageLookTests.swift` (the font order, the opening lines, every mark has its picture, the licence is in the app, and the real window's buttons: the tests run inside the app, so they check its real window shows the buttons and that they step back and return). `PageSnapshotTests.swift` gains History on the left, an empty page with its opening line, and every mark in both modes. A picture drawn off screen has no window around it, so `InsideAWindow` adds the 32 point strip and three plain circles standing in for the buttons macOS draws.
+
+Not tried by hand: the names on hover, the buttons coming back when the pointer reaches the top strip, going in and out of fullscreen, and how the real buttons sit above History.
 
 ## Product Vision & User Experience
 
