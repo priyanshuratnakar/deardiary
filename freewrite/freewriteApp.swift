@@ -21,6 +21,10 @@ struct freewriteApp: App {
         // Dear Diary: the memory engine checks the journal folder in the background.
         // It does nothing unless AI and memory are both switched on in Settings.
         MemoryEngine.shared.start()
+
+        // Dear Diary: keeps earlier versions of entries in the background.
+        // It does nothing unless versions are switched on in Settings.
+        SnapshotKeeper.shared.start()
     }
      
     var body: some Scene {

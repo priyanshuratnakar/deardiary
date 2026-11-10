@@ -453,7 +453,7 @@ enum TidyJSON {
         #expect(await engine.tidy(force: true) == nil)
 
         #expect(sandbox.store.loadSnapshot() == before)
-        #expect(await summary(of: engine).lastTidy == "The last tidy could not be used, so nothing was changed.")
+        #expect(await summary(of: engine).lastTidy == "The last tidy couldn't be used, so nothing was changed.")
         #expect(await summary(of: engine).isWorking == false)
 
         // The week restarts, so it is not retried on the next look.

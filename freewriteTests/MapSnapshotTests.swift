@@ -77,5 +77,15 @@ final class MapSnapshotTests: XCTestCase {
 
         attach(try renderOffscreen(screen(model, dark: false), size: windowSize, dark: false), named: "map-light-empty")
         XCTAssertTrue(model.graph.isEmpty)
+
+        // With memory off, the same screen says how to start.
+        let off = MapScreen(
+            model: model,
+            style: MapStyle(fontName: "Lato-Regular", isLight: false),
+            memoryIsOn: false,
+            onClose: {},
+            onOpenEntry: { _ in }
+        )
+        attach(try renderOffscreen(off, size: windowSize, dark: true), named: "map-dark-empty-memory-off")
     }
 }

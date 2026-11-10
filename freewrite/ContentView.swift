@@ -139,6 +139,7 @@ struct ContentView: View {
     @State private var videoPermissionPopoverFallbackMessage: String? = nil
     @StateObject private var talk = TalkController() // Dear Diary: talk mode
     @State private var showingMap = false // Dear Diary: the map of memory
+    @State private var versionsEntryId: UUID? = nil // Dear Diary: the entry whose earlier versions are showing
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     let entryHeight: CGFloat = 40
     
@@ -1636,6 +1637,7 @@ struct ContentView: View {
                                                 // Export/Trash icons that appear on hover
                                                 if hoveredEntryId == entry.id {
                                                     HStack(spacing: 8) {
+                                                        VersionsIconButton(entryID: entry.id, isLight: colorScheme == .light) { versionsEntryId = entry.id } // Dear Diary: earlier versions of this entry
                                                         // Export PDF button
                                                         Button(action: {
                                                             exportEntryAsPDF(entry: entry)
@@ -1756,6 +1758,34 @@ struct ContentView: View {
                         selectedEntryId = target.id
                         loadEntry(entry: target)
                     }
+                )
+                .zIndex(9)
+            }
+        }
+        .overlay {
+            // Dear Diary: an entry's earlier versions, over the whole window.
+            if let versionsEntry = versionsEntryId {
+                VersionsView(
+                    entryID: versionsEntry,
+                    fontName: selectedFont,
+                    fontSize: fontSize,
+                    colorScheme: colorScheme,
+                    onRestore: { restored in
+                        // Open that entry, the way a click in History does, then put the restored text on the page.
+                        if selectedEntryId != versionsEntry,
+                           let target = entries.first(where: { $0.id == versionsEntry }) {
+                            if let currentId = selectedEntryId,
+                               let currentEntry = entries.first(where: { $0.id == currentId }),
+                               currentEntry.entryType == .text {
+                                saveEntry(entry: currentEntry)
+                            }
+                            selectedEntryId = target.id
+                            loadEntry(entry: target)
+                        }
+                        text = restored
+                        versionsEntryId = nil
+                    },
+                    onClose: { versionsEntryId = nil }
                 )
                 .zIndex(9)
             }
@@ -2079,6 +2109,7 @@ struct ContentView: View {
             try fileManager.removeItem(at: fileURL)
             print("Successfully deleted file: \(entry.filename)")
             talk.entryDeleted(entry.id) // Dear Diary: the entry's talk conversation goes with it
+            SnapshotKeeper.shared.entryDeleted(entry.id) // Dear Diary: so do its earlier versions
 
             // If this is a video entry, also delete the video file
             if let videoFilename = resolvedVideoFilename(for: entry) {

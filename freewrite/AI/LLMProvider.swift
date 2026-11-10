@@ -79,7 +79,7 @@ enum LLMError: Error, Equatable {
         case .invalidKey:
             return "Claude didn't accept that API key. Check it and save it again."
         case .billing:
-            return "There's a billing problem on your Anthropic account."
+            return "There's a billing problem on your Anthropic account. Check your credits there."
         case .permission:
             return "Your API key isn't allowed to do that. Check your Anthropic account."
         case .modelNotFound:
@@ -93,7 +93,7 @@ enum LLMError: Error, Equatable {
         case .refused:
             return "Claude declined to respond to this."
         case .truncated:
-            return "The reply was cut off before it finished."
+            return "The reply was cut off before it finished. Try again."
         case .rejected(let detail):
             return detail.isEmpty
                 ? "Claude couldn't accept that request."

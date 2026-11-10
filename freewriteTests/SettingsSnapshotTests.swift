@@ -15,12 +15,13 @@ final class SettingsSnapshotTests: XCTestCase {
 
     @MainActor
     func testSettingsDrawsWithAIOffInLightMode() throws {
-        try snapshot(named: "settings-light-ai-off", dark: false) { _, _ in }
+        try snapshot(named: "settings-light-ai-off", dark: false) { _, _, _ in }
     }
 
     @MainActor
     func testSettingsDrawsWithAIAndMemoryOnInDarkMode() throws {
-        try snapshot(named: "settings-dark-ai-on", dark: true) { settings, memory in
+        try snapshot(named: "settings-dark-ai-on", dark: true) { settings, memory, versions in
+            versions.enabled = true
             settings.aiEnabled = true
             settings.saveAPIKey("made-up-key-for-tests")
             settings.memoryEnabled = true
@@ -31,7 +32,7 @@ final class SettingsSnapshotTests: XCTestCase {
 
     @MainActor
     func testSettingsShowsAMemoryProblemAsOnePlainLine() throws {
-        try snapshot(named: "settings-light-memory-problem", dark: false) { settings, memory in
+        try snapshot(named: "settings-light-memory-problem", dark: false) { settings, memory, _ in
             settings.aiEnabled = true
             settings.saveAPIKey("made-up-key-for-tests")
             settings.memoryEnabled = true
@@ -40,7 +41,7 @@ final class SettingsSnapshotTests: XCTestCase {
     }
 
     @MainActor
-    private func snapshot(named name: String, dark: Bool, configure: (AISettings, MemoryStatus) -> Void) throws {
+    private func snapshot(named name: String, dark: Bool, configure: (AISettings, MemoryStatus, VersionSettings) -> Void) throws {
         let suiteName = "deardiary.tests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         let keychain = Keychain(service: "com.priyanshuratnakar.deardiary.tests.\(UUID().uuidString)", account: "test")
@@ -52,9 +53,17 @@ final class SettingsSnapshotTests: XCTestCase {
         defaults.set(dark ? "dark" : "light", forKey: "colorScheme")
         let settings = AISettings(defaults: defaults, keychain: keychain)
         let memoryStatus = MemoryStatus()
-        configure(settings, memoryStatus)
+        let versions = VersionSettings(defaults: defaults)
+        configure(settings, memoryStatus, versions)
 
-        let view = SettingsView(settings: settings, memoryStatus: memoryStatus, memoryActions: .none)
+        let view = SettingsView(
+            settings: settings,
+            memoryStatus: memoryStatus,
+            memoryActions: .none,
+            versions: versions,
+            versionIndex: VersionIndex(),
+            versionActions: .none
+        )
             .defaultAppStorage(defaults)
 
         attach(try renderOffscreen(view, dark: dark), named: name)

@@ -271,6 +271,51 @@ An answer that cannot be read changes nothing and is not asked for again until t
 
 Tests: `MemoryFixesTests.swift` (each fix, and `FixesSurviveARebuildTests`, which rebuilds memory after each kind of fix), `MemoryTidyTests.swift` (the parser and schema, `MemoryTidier`, and when the tidy runs), `MapFixTests.swift` (the fix steps on the map through the real engine, and pictures of the panel in each state). `MemorySandbox.quietLimits` switches off the tidy after a rebuild for tests that are not about it. `FakeProvider.onRequest` lets a test change memory while a request is "with the AI".
 
+### M7: versions and polish
+
+**Versions.** Each entry can keep timed copies of itself, so an earlier state can be read and brought back. Versions have their own switch in Settings ("Versions are On"), off by default. They have nothing to do with AI: nothing is sent anywhere and they work with AI on or off. With the switch off nothing is saved and nothing is shown, so the app is freewrite.
+
+On disk, inside the journal folder: `versions/[ENTRY-UUID]/[yyyy-MM-dd-HH-mm-ss].md`. Each file is the entry's text exactly as it was at that time.
+
+New files, all in `freewrite/Versions/`:
+
+- `SnapshotStore.swift`: the only code that reads or writes the versions folder (`EntryVersion`, `SnapshotStore`).
+- `VersionSettings.swift`: the switch, `versions.enabled` in UserDefaults. Under test, `VersionSettings.shared` is a throwaway copy and off.
+- `SnapshotKeeper.swift`: the background keeper (an `actor`), with `VersionLimits`, `VersionEnvironment` and `VersionIndex` (what the sidebar and Settings observe).
+- `VersionsView.swift`: `VersionsModel`, `VersionsView` (what `ContentView` hosts), `VersionsScreen`, `VersionsIconButton` (the icon in a History row) and `VersionText`.
+
+Rules the code follows (keep them when changing it):
+
+1. **The keeper only reads entries.** Like the memory engine it looks at the journal folder itself, once a minute, off the main thread, and reads the files freewrite has already saved. It never writes an entry file and typing never waits for it.
+2. **When a version is saved.** When the entry's text differs from its newest version and five minutes have passed since that version (for an entry with no version yet, since the entry was started). So a long writing session leaves a copy every five minutes, and the state an entry was left in becomes a copy within five minutes.
+3. **Entries that already exist get one copy** on the first check after versions are switched on, so the first later edit to an old entry can be undone.
+4. **Skipped:** empty entries, video entries and freewrite's welcome guide. Text that has not changed is never copied twice.
+5. **The newest 50 versions** of each entry are kept (`VersionLimits.keep`).
+6. **The History icon shows only when there is something earlier to see:** the entry has more than one version, or one version and an edit since. With versions off the index is empty, so the sidebar is freewrite's own.
+7. **A restore can always be undone.** Before a restore, the entry as it reads now is saved as a version, whatever the time. If that fails, nothing is restored. The versions code never writes the entry itself: it hands the text to `ContentView`, which puts it on the page, and freewrite's own auto-save writes the file.
+8. **Deleting an entry deletes its versions**, even while versions are off.
+9. **Switching versions off** stops saving and hides the icons. Files already saved are left alone.
+10. **Failure is quiet:** one plain line under "Versions are On" in Settings.
+
+The versions screen covers the whole window, the way the map does. The chosen version is on the left in the page's font and size, read only. The list of times is on the right, styled like History (200pt wide). "Restore this version" and "Close" are words along the bottom; Esc closes. It opens on the newest version that differs from the entry. The version that matches the entry says "This is how the entry reads now" instead of offering a restore.
+
+Changes in `ContentView.swift` (all marked with a "Dear Diary" comment; these four are outside the PRD's list and were approved by the owner):
+
+1. One `@State` line, `versionsEntryId`.
+2. One line adding `VersionsIconButton` to the hover icons in a History row. The export and delete code beside it is not re-indented.
+3. A third `.overlay` hosting `VersionsView`. Its `onRestore` opens that entry the way a click in History does, then sets the page text.
+4. One line in `deleteEntry`.
+
+`freewriteApp.swift` gains one line that starts the keeper at launch. `SettingsView` gains the versions section and `VersionActions`.
+
+**Polish.**
+
+- **Messages.** Every error line the fork shows is in one voice: short, plain, and saying what to do next when there is something to do. The full list, with the file each one lives in, is `docs/messages.md`. Update that list when wording changes.
+- **Empty states.** Each is one or two plain lines. The empty map now says the right thing whether memory is on or off (`MapScreen.memoryIsOn`). The empty talk column stays blank on purpose, like the page.
+- **Dark mode.** Every new screen is drawn in both modes by the picture tests. `AppearanceTests` measures each text colour against its background in both modes: body and strong text at 7 to 1 or better, the quiet grey words (freewrite's own bottom-bar grey) and secondary text at 3 to 1 or better. Dots on the map are at 3 to 1 or better on black; on white the amber for ideas is the weakest at a little over 2 to 1, which is one reason the kind is always in words too.
+
+Tests: `VersionsTests.swift` (the store, the keeper with a clock the test controls, the screen's model, the switch), `VersionsSnapshotTests.swift` (pictures of the versions screen and the History icon) and `AppearanceTests.swift`.
+
 ## Product Vision & User Experience
 
 ### What is Freewrite?

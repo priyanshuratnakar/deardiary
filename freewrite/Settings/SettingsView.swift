@@ -16,6 +16,9 @@ struct SettingsView: View {
     @ObservedObject private var settings: AISettings
     @ObservedObject private var memoryStatus: MemoryStatus
     private let memoryActions: MemoryActions
+    @ObservedObject private var versions: VersionSettings
+    @ObservedObject private var versionIndex: VersionIndex
+    private let versionActions: VersionActions
     @AppStorage("colorScheme") private var colorSchemeString: String = "light"
 
     /// The app always uses the shared settings and the real memory engine.
@@ -23,11 +26,17 @@ struct SettingsView: View {
     init(
         settings: AISettings = .shared,
         memoryStatus: MemoryStatus = MemoryEngine.shared.status,
-        memoryActions: MemoryActions = .live
+        memoryActions: MemoryActions = .live,
+        versions: VersionSettings = .shared,
+        versionIndex: VersionIndex = SnapshotKeeper.shared.index,
+        versionActions: VersionActions = .live
     ) {
         self.settings = settings
         self.memoryStatus = memoryStatus
         self.memoryActions = memoryActions
+        self.versions = versions
+        self.versionIndex = versionIndex
+        self.versionActions = versionActions
     }
 
     @State private var keyDraft = ""
@@ -62,6 +71,8 @@ struct SettingsView: View {
             memorySection
             Divider()
             testSection
+            Divider()
+            versionsSection
         }
         .frame(width: 440)
         .background(backgroundColor)
@@ -145,7 +156,7 @@ struct SettingsView: View {
             keyDraft = ""
             keyNote = nil
         } else {
-            keyNote = "The key could not be saved to the Keychain."
+            keyNote = "Couldn't save the key to your Keychain."
         }
     }
 
@@ -346,6 +357,47 @@ struct SettingsView: View {
         .padding(.vertical, 12)
     }
 
+    // MARK: - Versions
+
+    private var versionsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SettingsWordButton(
+                title: versions.enabled ? "Versions are On" : "Versions are Off",
+                quietColor: quietColor,
+                strongColor: strongColor
+            ) {
+                versions.enabled.toggle()
+                versionActions.changed()
+            }
+
+            Text("When versions are on, a copy of an entry is kept every five minutes while it changes, so you can read an earlier one and bring it back. Copies stay in your journal folder and are never sent anywhere. They work with AI on or off.")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if versions.enabled {
+                Text("Open them from the small arrow beside an entry in History.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let problem = versionIndex.problem {
+                Text(problem)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            SettingsWordButton(title: "Open versions folder", quietColor: quietColor, strongColor: strongColor) {
+                versionActions.openFolder()
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
     /// Sends one fixed, harmless message (no journal text) and shows the reply as it arrives.
     private func runTest() {
         testTask?.cancel()
@@ -377,6 +429,20 @@ struct SettingsView: View {
             isTesting = false
         }
     }
+}
+
+/// What the versions words in Settings do. Tests pass in ones that do nothing.
+struct VersionActions {
+    /// Called when versions are switched on or off.
+    var changed: () -> Void
+    var openFolder: () -> Void
+
+    static let live = VersionActions(
+        changed: { SnapshotKeeper.shared.nudge() },
+        openFolder: { NSWorkspace.shared.open(SnapshotStore().ensureFolder()) }
+    )
+
+    static let none = VersionActions(changed: {}, openFolder: {})
 }
 
 /// What the memory words in Settings do. Tests pass in versions that do nothing.

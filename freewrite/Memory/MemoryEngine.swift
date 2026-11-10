@@ -228,7 +228,7 @@ actor MemoryEngine {
             try env.store.savePins(pins)
             try env.store.write(memory, replacing: before)
         } catch {
-            summary.problem = "The memory folder could not be written to."
+            summary.problem = "Couldn't write to the memory folder."
             await publish()
             return false
         }
@@ -314,7 +314,7 @@ actor MemoryEngine {
             return nil
         } catch {
             // The answer could not be used. Leave memory as it is until the next tidy is due.
-            recordTidy("The last tidy could not be used, so nothing was changed.", at: now)
+            recordTidy("The last tidy couldn't be used, so nothing was changed.", at: now)
             summary.isWorking = false
             await publish()
             return nil
@@ -349,7 +349,7 @@ actor MemoryEngine {
         do {
             try env.store.write(updated, replacing: current)
         } catch {
-            summary.problem = "The memory folder could not be written to."
+            summary.problem = "Couldn't write to the memory folder."
             summary.isWorking = false
             await publish()
             return nil
@@ -386,7 +386,7 @@ actor MemoryEngine {
             return .paused
         }
         guard let files = env.journal.entryFiles() else {
-            summary.problem = "The journal folder could not be read."
+            summary.problem = "Couldn't read the journal folder."
             await publish()
             return .unreadable
         }
@@ -551,7 +551,7 @@ actor MemoryEngine {
                 try env.store.write(updated, replacing: current)
                 try env.store.saveDigest(record)
             } catch {
-                summary.problem = "The memory folder could not be written to."
+                summary.problem = "Couldn't write to the memory folder."
                 pausedUntil = env.now().addingTimeInterval(env.limits.retryGap)
                 break
             }

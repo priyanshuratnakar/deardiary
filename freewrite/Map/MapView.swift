@@ -69,6 +69,7 @@ struct MapView: View {
             style: MapStyle(fontName: fontName, isLight: colorScheme == .light),
             problem: memoryStatus.summary.problem,
             fitOnAppear: true,
+            memoryIsOn: AISettings.shared.memoryEnabled,
             onClose: onClose,
             onOpenEntry: onOpenEntry
         )
@@ -98,6 +99,8 @@ struct MapScreen: View {
     let style: MapStyle
     var problem: String? = nil
     var fitOnAppear = false
+    /// Whether memory is switched on, so the empty map can say what to do next.
+    var memoryIsOn = true
     let onClose: () -> Void
     let onOpenEntry: (UUID) -> Void
 
@@ -256,7 +259,9 @@ struct MapScreen: View {
             Text("Nothing in memory yet")
                 .font(.custom(style.fontName, size: 18))
                 .foregroundColor(style.bodyColor)
-            Text("Turn memory on in Settings. Thoughts appear here as your entries settle.")
+            Text(memoryIsOn
+                 ? "Thoughts appear here once an entry has settled, about ten minutes after you stop writing."
+                 : "Turn memory on in Settings and thoughts will appear here as you write.")
                 .font(.system(size: 13))
                 .foregroundColor(.secondary)
         }
