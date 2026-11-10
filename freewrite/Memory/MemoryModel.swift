@@ -53,6 +53,13 @@ struct ThoughtLink: Equatable {
     var quote: String
 }
 
+/// A connection the user made by hand on the map. It has no quoted line behind it,
+/// so it is kept apart from the AI's links and is never shown as evidence.
+struct UserLink: Equatable {
+    var target: String
+    var reason: String
+}
+
 struct Thought: Equatable {
     /// A readable name that is also the note's file name, such as "saying-yes-under-pressure".
     var id: String
@@ -65,6 +72,8 @@ struct Thought: Equatable {
     var timeline: [TimelineNote] = []
     var evidence: [Evidence] = []
     var links: [ThoughtLink] = []
+    /// Links the user added by hand.
+    var userLinks: [UserLink] = []
 
     private var allDates: [String] {
         evidence.map(\.date) + timeline.map(\.date) + links.map(\.date)
@@ -134,12 +143,18 @@ struct EntryDigest: Codable, Equatable {
     }
 }
 
-/// The user's manual fixes. The AI reads these and must obey them.
-/// The screen for making fixes arrives in M6; until then the file can be edited by hand.
+/// The user's manual fixes, kept in memory/pins.json. The AI reads these and must obey them.
+///
+/// Each fix also records the names the thought went by at the time. After a
+/// rebuild the AI may name a thought a little differently, so fixes are matched
+/// by those names as well as by the note's file name.
 struct Pins: Codable, Equatable {
     struct Rename: Codable, Equatable {
         var id: String
+        /// The name the user gave it.
         var label: String
+        /// What it was called before, and its other names.
+        var names: [String]? = nil
     }
 
     struct Merge: Codable, Equatable {
@@ -147,12 +162,25 @@ struct Pins: Codable, Equatable {
         var from: String
         /// The thought it now belongs to.
         var into: String
+        /// What the folded thought was called, and its other names.
+        var names: [String]? = nil
+        /// What the thought it joined was called at the time.
+        var intoLabel: String? = nil
+
+        private enum CodingKeys: String, CodingKey {
+            case from
+            case into
+            case names
+            case intoLabel = "into_label"
+        }
     }
 
     struct Deletion: Codable, Equatable {
         var id: String
         /// Kept so the same thought cannot come back under the same name.
         var label: String
+        /// Its other names.
+        var names: [String]? = nil
     }
 
     struct LinkPin: Codable, Equatable {
@@ -188,6 +216,10 @@ struct Pins: Codable, Equatable {
         linksRemoved = try container.decodeIfPresent([LinkPin].self, forKey: .linksRemoved) ?? []
     }
 
+    var isEmpty: Bool {
+        renames.isEmpty && merges.isEmpty && deletions.isEmpty && linksAdded.isEmpty && linksRemoved.isEmpty
+    }
+
     /// Follows merges to the thought an id now belongs to.
     func resolve(_ id: String) -> String {
         var current = id
@@ -207,14 +239,44 @@ struct Pins: Codable, Equatable {
     func hasDeleted(name: String) -> Bool {
         let wanted = MemoryText.normalizedName(name)
         guard !wanted.isEmpty else { return false }
-        return deletions.contains {
-            MemoryText.normalizedName($0.label) == wanted || MemoryText.normalizedName($0.id) == wanted
+        return deletions.contains { deletion in
+            ([deletion.label, deletion.id] + (deletion.names ?? [])).contains { MemoryText.normalizedName($0) == wanted }
         }
     }
 
     /// The label the user chose for a thought, if they renamed it.
     func pinnedLabel(for id: String) -> String? {
         renames.last { $0.id == id }?.label
+    }
+
+    /// True if the user has renamed this thought or linked it by hand.
+    /// The weekly tidy leaves such thoughts alone.
+    func isTouchedByUser(_ id: String) -> Bool {
+        renames.contains { $0.id == id } || linksAdded.contains { $0.from == id || $0.to == id }
+    }
+
+    /// The thought a name belongs to according to the user's fixes: one they
+    /// renamed (by its new or old names) or one they folded into another.
+    /// Used after a rebuild, when the AI's own names may have shifted.
+    func pinnedID(forName name: String) -> String? {
+        let wanted = MemoryText.normalizedName(name)
+        guard !wanted.isEmpty else { return nil }
+        for rename in renames {
+            if ([rename.label, rename.id] + (rename.names ?? [])).contains(where: { MemoryText.normalizedName($0) == wanted }) {
+                return resolve(rename.id)
+            }
+        }
+        for merge in merges {
+            if ([merge.from] + (merge.names ?? [])).contains(where: { MemoryText.normalizedName($0) == wanted }) {
+                return resolve(merge.into)
+            }
+        }
+        return nil
+    }
+
+    /// The label to give a thought created under a merge target that does not exist yet.
+    func mergeTargetLabel(for id: String) -> String? {
+        merges.last { $0.into == id && $0.intoLabel != nil }?.intoLabel
     }
 
     /// True if the user removed the link between these two thoughts, in either direction.

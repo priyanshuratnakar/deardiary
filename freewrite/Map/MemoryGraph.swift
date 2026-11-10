@@ -102,6 +102,24 @@ enum GraphBuilder {
                 }
                 edges[id] = edge
             }
+
+            // Links the user made by hand.
+            for link in thought.userLinks.sorted(by: { ($0.target, $0.reason) < ($1.target, $1.reason) }) {
+                guard link.target != thought.id, memory.thoughts[link.target] != nil else { continue }
+                let id = GraphEdge.id(thought.id, link.target)
+                var edge = edges[id] ?? GraphEdge(
+                    id: id,
+                    first: min(thought.id, link.target),
+                    second: max(thought.id, link.target),
+                    count: 0,
+                    reasons: []
+                )
+                edge.count += 1
+                if !link.reason.isEmpty, !edge.reasons.contains(link.reason) {
+                    edge.reasons.append(link.reason)
+                }
+                edges[id] = edge
+            }
         }
 
         let graph = MemoryGraph(nodes: nodes, edges: edges.values.sorted { $0.id < $1.id })

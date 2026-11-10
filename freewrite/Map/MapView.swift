@@ -266,8 +266,15 @@ struct MapScreen: View {
 
     private func bottomBar(size: CGSize) -> some View {
         HStack(spacing: 8) {
-            MapWord(title: "Close", style: style, action: onClose)
-                .keyboardShortcut(.cancelAction)
+            MapWord(title: "Close", style: style) {
+                // Esc first backs out of a fix that is part-way through.
+                if model.pending != nil {
+                    model.pending = nil
+                } else {
+                    onClose()
+                }
+            }
+            .keyboardShortcut(.cancelAction)
 
             if !model.graph.isEmpty {
                 Text("•").foregroundColor(.gray)

@@ -28,6 +28,9 @@ final class FakeProvider: LLMProvider, @unchecked Sendable {
     private let lock = NSLock()
     private var steps: [Step]
     private var seen: [LLMRequest] = []
+    /// Called for each request before it is answered, with how many came before it.
+    /// Lets a test change something "while the request is in flight".
+    var onRequest: ((Int) -> Void)? = nil
 
     init(_ steps: [Step] = []) {
         self.steps = steps
@@ -42,9 +45,12 @@ final class FakeProvider: LLMProvider, @unchecked Sendable {
 
     private func nextStep(for request: LLMRequest) -> Step {
         lock.lock()
-        defer { lock.unlock() }
+        let earlier = seen.count
         seen.append(request)
-        return steps.isEmpty ? .reply(["(no scripted reply)"]) : steps.removeFirst()
+        let step = steps.isEmpty ? Step.reply(["(no scripted reply)"]) : steps.removeFirst()
+        lock.unlock()
+        onRequest?(earlier)
+        return step
     }
 
     func stream(_ request: LLMRequest) -> AsyncThrowingStream<String, Error> {

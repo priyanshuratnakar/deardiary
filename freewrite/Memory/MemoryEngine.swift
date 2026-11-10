@@ -36,6 +36,8 @@ struct MemorySummary: Equatable {
     var lastUpdated: Date? = nil
     /// A plain sentence when something went wrong, otherwise nil.
     var problem: String? = nil
+    /// What the last weekly tidy did, in one line, or nil if there has not been one.
+    var lastTidy: String? = nil
 }
 
 /// Published on the main thread for the Settings window.
@@ -54,6 +56,14 @@ struct MemoryLimits {
     var retryGap: TimeInterval = 300
     /// How often the journal folder is checked.
     var passInterval: TimeInterval = 60
+    /// How long after one tidy the next one is due.
+    var tidyEvery: TimeInterval = 7 * 24 * 3600
+    /// The weekly tidy waits until memory holds at least this many thoughts.
+    var tidyMinimumThoughts = 8
+    /// A rebuild ends with a tidy, so duplicates merged earlier do not come back.
+    var tidyAfterRebuild = true
+    /// A thought seen in one entry can be retired once that entry is this many days old.
+    var oneOffAfterDays = 21
 }
 
 /// Everything the engine depends on. Tests swap in throwaway versions.
@@ -126,7 +136,10 @@ actor MemoryEngine {
         let interval = env.limits.passInterval
         loop = Task { [weak self] in
             while !Task.isCancelled {
-                await self?.runPass()
+                if case .finished = await self?.runPass() {
+                    // About once a week, with nothing else to do, look across all of memory.
+                    await self?.tidy()
+                }
                 try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
             }
         }
@@ -170,6 +183,9 @@ actor MemoryEngine {
         pausedUntil = nil
         summary = MemorySummary()
         await runPass(everything: true)
+        if env.limits.tidyAfterRebuild, !stopRequested {
+            await tidy(force: true)
+        }
     }
 
     /// Deletes the whole memory folder. Entries are not touched.
@@ -178,6 +194,8 @@ actor MemoryEngine {
         env.store.forgetEverything()
         fingerprints = [:]
         pausedUntil = nil
+        env.defaults.removeObject(forKey: TidyKey.at)
+        env.defaults.removeObject(forKey: TidyKey.line)
         summary = MemorySummary()
         await publish()
     }
@@ -187,7 +205,169 @@ actor MemoryEngine {
         guard !isRunning else { return }
         summary.thoughts = env.store.loadSnapshot().thoughts.count
         summary.digestedEntries = env.store.loadAllDigests().filter { !$0.failed }.count
+        summary.lastTidy = env.defaults.string(forKey: TidyKey.line)
         await publish()
+    }
+
+    // MARK: - The user's fixes
+
+    /// Makes one of the user's fixes: changes the notes and records it in the fixes file.
+    /// This needs no AI and works whether memory is on or off. It runs here, in
+    /// the engine, so it can never collide with a digest being written.
+    @discardableResult
+    func fix(_ fix: MemoryFix) async -> Bool {
+        let before = env.store.loadSnapshot()
+        var memory = before
+        var pins = env.store.loadPins()
+        guard MemoryFixes.apply(fix, to: &memory, pins: &pins) else {
+            return false
+        }
+        do {
+            // The fixes file first: if the notes could not be written, the fix is
+            // still on record and is applied the next time memory changes.
+            try env.store.savePins(pins)
+            try env.store.write(memory, replacing: before)
+        } catch {
+            summary.problem = "The memory folder could not be written to."
+            await publish()
+            return false
+        }
+        summary.thoughts = memory.thoughts.count
+        summary.lastUpdated = env.now()
+        await publish()
+        return true
+    }
+
+    // MARK: - The weekly tidy
+
+    private enum TidyKey {
+        static let at = "memory.tidy.at"
+        static let line = "memory.tidy.line"
+    }
+
+    /// Looks across all of memory: merges duplicates, retires one-offs, adds patterns
+    /// that only show across weeks, and refreshes the profile. One request.
+    ///
+    /// Without `force` it only runs when a week has passed since the last tidy and
+    /// memory holds enough thoughts to be worth it. Returns nil if it did not run.
+    @discardableResult
+    func tidy(force: Bool = false) async -> MemoryTidier.Outcome? {
+        guard env.isEnabled(), !isRunning else {
+            return nil
+        }
+        let now = env.now()
+        let memory = env.store.loadSnapshot()
+
+        if force {
+            guard memory.thoughts.count >= 2 else { return nil }
+        } else {
+            guard memory.thoughts.count >= env.limits.tidyMinimumThoughts else { return nil }
+            let last = env.defaults.double(forKey: TidyKey.at)
+            guard last > 0 else {
+                // Nothing to compare with yet: the week starts now.
+                env.defaults.set(now.timeIntervalSince1970, forKey: TidyKey.at)
+                return nil
+            }
+            guard now.timeIntervalSince1970 - last >= env.limits.tidyEvery else { return nil }
+            if let pausedUntil, now < pausedUntil { return nil }
+            guard requestsToday() < env.limits.dailyRequests else { return nil }
+        }
+
+        isRunning = true
+        stopRequested = false
+        defer { isRunning = false }
+
+        summary.isWorking = true
+        summary.workDone = 0
+        summary.workTotal = 1
+        await publish()
+
+        let request = LLMRequest(
+            model: env.model(),
+            system: Prompts.tidySystem,
+            messages: [
+                LLMMessage(role: .user, text: Prompts.tidyMessage(
+                    profile: memory.profile,
+                    thoughts: Array(memory.thoughts.values),
+                    recentDigests: env.store.loadAllDigests(),
+                    today: now
+                )),
+            ],
+            maxTokens: AILimits.tidyMaxTokens,
+            retryIfDeclined: true,
+            jsonSchema: TidySchema.data
+        )
+
+        let result: TidyResult
+        do {
+            countRequest()
+            let reply = try await env.provider().complete(request)
+            result = try TidyParser.parse(reply.text)
+        } catch let error as LLMError where error != .refused && error != .truncated {
+            // No network, busy, a bad key: say so quietly and try again another time.
+            if error != .aiOff && error != .missingKey {
+                summary.problem = error.userMessage
+                pausedUntil = now.addingTimeInterval(env.limits.retryGap)
+            }
+            summary.isWorking = false
+            await publish()
+            return nil
+        } catch {
+            // The answer could not be used. Leave memory as it is until the next tidy is due.
+            recordTidy("The last tidy could not be used, so nothing was changed.", at: now)
+            summary.isWorking = false
+            await publish()
+            return nil
+        }
+
+        // Memory may have changed while waiting (a fix made on the map): start from what is on disk now.
+        let current = env.store.loadSnapshot()
+        let pins = env.store.loadPins()
+        var updated = current
+        var texts: [UUID: DigestedEntry?] = [:]
+        let files = Dictionary((env.journal.entryFiles() ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+
+        let outcome = MemoryTidier.apply(
+            result,
+            to: &updated,
+            pins: pins,
+            entry: { id in
+                if let known = texts[id] {
+                    return known
+                }
+                var found: DigestedEntry? = nil
+                if let file = files[id], let text = self.env.journal.text(of: file) {
+                    found = DigestedEntry(id: id, date: MemoryText.day(file.startedAt), text: text)
+                }
+                texts[id] = found
+                return found
+            },
+            today: MemoryText.day(now),
+            rules: MemoryTidier.Rules(oneOffAfterDays: env.limits.oneOffAfterDays)
+        )
+
+        do {
+            try env.store.write(updated, replacing: current)
+        } catch {
+            summary.problem = "The memory folder could not be written to."
+            summary.isWorking = false
+            await publish()
+            return nil
+        }
+
+        recordTidy("Tidied on \(Prompts.longDay(now)): \(outcome.line).", at: now)
+        summary.thoughts = updated.thoughts.count
+        summary.lastUpdated = now
+        summary.problem = nil
+        summary.isWorking = false
+        await publish()
+        return outcome
+    }
+
+    private func recordTidy(_ line: String, at date: Date) {
+        env.defaults.set(date.timeIntervalSince1970, forKey: TidyKey.at)
+        env.defaults.set(line, forKey: TidyKey.line)
+        summary.lastTidy = line
     }
 
     // MARK: - One pass over the journal
@@ -216,7 +396,6 @@ actor MemoryEngine {
         defer { isRunning = false }
 
         var memory = env.store.loadSnapshot()
-        let pins = env.store.loadPins()
         var digests = Dictionary(env.store.loadAllDigests().map { ($0.entryID, $0) }, uniquingKeysWith: { first, _ in first })
         let since = everything ? nil : env.enabledSince()
         let newest = files.last
@@ -307,7 +486,6 @@ actor MemoryEngine {
                 jsonSchema: DigestSchema.data
             )
 
-            var updated = memory
             var record = EntryDigest(
                 entryID: entry.id,
                 entryDate: entry.date,
@@ -324,31 +502,22 @@ actor MemoryEngine {
                 failureReason: nil
             )
 
+            // Ask, then decide what the answer is worth.
+            var result: DigestResult? = nil
+            var unusableBecause: String? = nil
             do {
                 countRequest()
                 let reply = try await env.provider().complete(request)
                 record.inputTokens = reply.inputTokens
                 record.outputTokens = reply.outputTokens
-
-                let result = try DigestParser.parse(reply.text)
-                let outcome = MemoryApplier.apply(result, for: entry, to: &updated, pins: pins)
-                record.summary = MemoryText.singleLine(result.summary)
-                record.thoughts = outcome.touched
-                record.openLoops = result.openLoops.map(MemoryText.singleLine).filter { !$0.isEmpty }
-                record.rejected = outcome.rejected
+                result = try DigestParser.parse(reply.text)
             } catch let error as DigestParseError {
                 // The answer was not usable. Leave this entry until its text changes or memory is rebuilt.
-                MemoryApplier.remove(entryID: entry.id, from: &updated)
-                record.failed = true
-                record.failureReason = error.reason
+                unusableBecause = error.reason
             } catch LLMError.refused {
-                MemoryApplier.remove(entryID: entry.id, from: &updated)
-                record.failed = true
-                record.failureReason = LLMError.refused.userMessage
+                unusableBecause = LLMError.refused.userMessage
             } catch LLMError.truncated {
-                MemoryApplier.remove(entryID: entry.id, from: &updated)
-                record.failed = true
-                record.failureReason = LLMError.truncated.userMessage
+                unusableBecause = LLMError.truncated.userMessage
             } catch let error as LLMError {
                 // Anything else (no network, busy, a bad key) stops this pass. It is tried again later.
                 if error != .aiOff && error != .missingKey {
@@ -360,8 +529,26 @@ actor MemoryEngine {
                 break
             }
 
+            // Memory may have changed while waiting (a fix made on the map), so start
+            // from what is on disk now, with the fixes as they stand now.
+            let current = env.store.loadSnapshot()
+            let pins = env.store.loadPins()
+            var updated = current
+
+            if let result {
+                let outcome = MemoryApplier.apply(result, for: entry, to: &updated, pins: pins)
+                record.summary = MemoryText.singleLine(result.summary)
+                record.thoughts = outcome.touched
+                record.openLoops = result.openLoops.map(MemoryText.singleLine).filter { !$0.isEmpty }
+                record.rejected = outcome.rejected
+            } else {
+                MemoryApplier.remove(entryID: entry.id, from: &updated)
+                record.failed = true
+                record.failureReason = unusableBecause
+            }
+
             do {
-                try env.store.write(updated, replacing: memory)
+                try env.store.write(updated, replacing: current)
                 try env.store.saveDigest(record)
             } catch {
                 summary.problem = "The memory folder could not be written to."

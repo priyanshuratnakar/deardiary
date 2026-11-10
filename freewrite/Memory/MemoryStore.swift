@@ -146,6 +146,20 @@ struct MemoryStore {
         return pins
     }
 
+    /// Writes the user's fixes. With no fixes left, the file is removed.
+    func savePins(_ pins: Pins) throws {
+        guard !pins.isEmpty else {
+            if fileManager.fileExists(atPath: pinsURL.path) {
+                try fileManager.removeItem(at: pinsURL)
+            }
+            return
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+        try encoder.encode(pins).write(to: pinsURL, options: .atomic)
+    }
+
     // MARK: - Forgetting
 
     /// Removes everything the AI built but keeps the user's fixes, and keeps any

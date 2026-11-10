@@ -111,7 +111,7 @@ memory/
   profile.md              a short running picture, rewritten as things change
   thoughts/<id>.md        one readable note per thought; <id> is a readable name such as saying-yes-under-pressure
   entries/<UUID>.json     one digest per entry: summary, thoughts touched, open loops, a fingerprint of the text
-  pins.json               the user's manual fixes; read and obeyed now, written by the M6 screen
+  pins.json               the user's manual fixes, made on the map (see M6); the AI must obey them
 ```
 
 `graph.json` (the graph as last drawn, with where each dot sits) is written by the map; see M5. Thought notes link to each other with `[[wikilinks]]`, so the folder opens as an Obsidian vault. The exact note format is described at the top of `freewrite/Memory/ThoughtNote.swift`.
@@ -201,9 +201,75 @@ Changes in `ContentView.swift` (all marked with a "Dear Diary" comment):
 2. The "Map" word in the bottom bar after Talk, shown when `talk.isAvailable` (AI on and a key saved).
 3. A second `.overlay` that hosts `MapView` over the whole window, the way the video recorder is shown. Its `onOpenEntry` saves the open entry, then selects and loads the chosen one, as a click in History does.
 
-Rename, merge, delete and link editing are M6.
+Rename, merge, delete and link editing were added in M6, below.
 
 Tests: `MapTests.swift` (graph building, layout, `graph.json`, the model, the panel's content) and `MapSnapshotTests.swift` (pictures of the map with the made-up week, a thought and a link selected, a crowd of 300 thoughts, and the empty state). `MapFixtures.crowd` in `freewriteTests/MapTestSupport.swift` makes a repeatable crowd of thoughts. Never draw the real `ContentView` with the map open against real memory in a test.
+
+### M6: fixes and the weekly tidy
+
+Two things were added: the user can correct memory from the map, and about once a week the AI looks across all of memory. `ContentView.swift` was not touched.
+
+**The user's fixes**
+
+- `freewrite/Memory/MemoryFixes.swift`: `MemoryFix` (rename, merge, delete, add a link, remove a link) and `MemoryFixes`. `apply` makes one fix on memory in hand and records it in the fixes; `enforce` puts every recorded fix back on memory and is the last step of every digest and every tidy.
+- `MemoryModel.swift`: the shape of `pins.json` (`Pins`), plus `UserLink` and `Thought.userLinks` for links the user made by hand.
+- `ThoughtNote.swift`: a note with hand-made links gets a `## Linked by you` section (`- [[other-thought]] · reason`). Notes without any are written exactly as before.
+- `MemoryEngine.fix(_:)` is the only way a fix is made. It runs inside the engine, so it cannot collide with a digest being written. It saves `pins.json` first and the notes second, needs no AI, and works with memory off.
+- The map: `MapPending` (a fix that is part-way through), `MapModel.perform`, and the fix words in `MapDetailView`.
+
+`pins.json`:
+
+```json
+{
+  "renames":       [{"id": "saying-yes-under-pressure", "label": "Agreeing too fast", "names": ["Saying yes under pressure"]}],
+  "merges":        [{"from": "people-pleasing", "into": "saying-yes-under-pressure", "names": ["People pleasing"], "into_label": "Agreeing too fast"}],
+  "deletions":     [{"id": "running", "label": "Running", "names": []}],
+  "links_added":   [{"from": "running", "to": "trouble-sleeping", "reason": "helps with"}],
+  "links_removed": [{"from": "meera", "to": "the-pricing-page"}]
+}
+```
+
+The file is removed when it holds no fixes. Rules (keep these when changing the code):
+
+1. **A fix is matched by name as well as by file name.** Each fix records what the thought was called at the time (`names`, `into_label`). After a rebuild the AI may name a thought a little differently, so a renamed thought is found again by its old names and keeps its file name, a merged thought is sent to the thought it was folded into, and a deleted thought stays deleted under any of its names.
+2. **A link is the pair, in either order.** Removing a link removes every line of evidence for it both ways, and the AI cannot add it back in either direction.
+3. **A hand-made link has no quoted line**, and the panel says so ("Linked by you. There is no quoted line behind this."). It is drawn like any other link.
+4. **Deleting or merging moves the user's own links** with the thought, or drops them if they no longer make sense.
+5. **Memory is read fresh before anything is written.** After each AI reply, the engine reloads the notes and `pins.json` from disk before applying it, so a fix made on the map while a digest or a tidy was with the AI is obeyed.
+
+On the map, the fix words sit along the bottom of the panel, always in view: Rename, Merge into…, Link to…, Delete for a thought; Remove link for a link.
+
+- Rename: type the new name, Return or Save.
+- Merge and link: click the word, then click the other thought on the map. While picking, no dot is faded. A click on empty space, Cancel, or Esc backs out. Merge then asks for a second click; link asks for a few words on how the two are linked.
+- Delete and Remove link ask for a second click in the panel. Nothing uses an alert window.
+- Selecting something else drops a fix that was part-way through. Esc backs out of a fix first and closes the map second.
+
+**The weekly tidy**
+
+One request that looks across all of memory, which a single entry's digest cannot do.
+
+- `freewrite/Memory/TidyResult.swift`: the shape of the reply (`TidyResult`), the strict parser (`TidyParser`) and the same shape as a JSON schema (`TidySchema`). As with digests, the parser and the schema must stay in step; a test checks this.
+- `freewrite/Memory/MemoryTidier.swift`: decides what from a tidy is allowed to change memory. It works on data in hand and touches no files.
+- `Prompts.tidySystem` and `Prompts.tidyMessage`: the instructions, and the material sent (the profile, every thought with its last six quoted lines and its links, and the summaries of the last 40 entries).
+- `MemoryEngine.tidy(force:)` and the limits in `MemoryLimits` (`tidyEvery`, `tidyMinimumThoughts`, `tidyAfterRebuild`, `oneOffAfterDays`).
+
+When it runs:
+
+- By itself: at the end of the engine's once-a-minute check, when memory is on, memory holds at least eight thoughts, and seven days have passed since the last tidy. The first time, it only starts the week. It counts toward the daily limit of 40 requests.
+- At the end of "Rebuild memory" (not held back by the daily limit).
+- From "Tidy memory now" in Settings.
+
+What it may do, and the checks (keep these when changing the code):
+
+1. **Merge duplicates.** Both thoughts must exist. A thought the user renamed or linked by hand is never folded away.
+2. **Retire one-offs.** The model only suggests. The app's rule decides: the thought appears in exactly one entry, that entry is more than three weeks old, and the user has not renamed or linked it. A retired thought is not recorded as a fix, so it can come back if the topic returns.
+3. **Add patterns and links that show across weeks.** Each needs quoted lines from at least two different entries, every quote checked against the entry it cites with `QuoteMatcher`. What is stored is the entry's own text. A pattern that already has a thought adds to it instead of making another.
+4. **Refresh the profile.**
+5. **The user's fixes have the last word**, exactly as in a digest.
+
+An answer that cannot be read changes nothing and is not asked for again until the next tidy is due. Network trouble shows one plain line in Settings and leaves the tidy due. Settings shows what the last tidy did, for example "Tidied on Monday 30 November 2026: merged 1, retired 2, 1 pattern across weeks." The time and that line are kept in UserDefaults (`memory.tidy.at`, `memory.tidy.line`) and are cleared by "Forget everything".
+
+Tests: `MemoryFixesTests.swift` (each fix, and `FixesSurviveARebuildTests`, which rebuilds memory after each kind of fix), `MemoryTidyTests.swift` (the parser and schema, `MemoryTidier`, and when the tidy runs), `MapFixTests.swift` (the fix steps on the map through the real engine, and pictures of the panel in each state). `MemorySandbox.quietLimits` switches off the tidy after a rebuild for tests that are not about it. `FakeProvider.onRequest` lets a test change memory while a request is "with the AI".
 
 ## Product Vision & User Experience
 

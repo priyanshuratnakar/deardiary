@@ -95,6 +95,16 @@ enum ThoughtNote {
         }
         lines.append("")
 
+        // Links the user made by hand. They carry a reason but no quote.
+        if !thought.userLinks.isEmpty {
+            lines.append("## Linked by you")
+            lines.append("")
+            for link in thought.userLinks.sorted(by: { ($0.target, $0.reason) < ($1.target, $1.reason) }) {
+                lines.append("- [[\(link.target)]]\(separator)\(MemoryText.singleLine(link.reason))")
+            }
+            lines.append("")
+        }
+
         return lines.joined(separator: "\n")
     }
 
@@ -157,6 +167,7 @@ enum ThoughtNote {
         var timeline: [TimelineNote] = []
         var evidence: [Evidence] = []
         var links: [ThoughtLink] = []
+        var userLinks: [UserLink] = []
 
         enum Open {
             case none
@@ -225,6 +236,11 @@ enum ThoughtNote {
                         let target = String(parts[0].dropFirst(2).dropLast(2))
                         open = .link(ThoughtLink(target: target, reason: parts[3], entryID: entryID, date: parts[1], quote: ""))
                     }
+                case "linked by you":
+                    let parts = split(body, into: 2)
+                    if parts.count == 2, parts[0].hasPrefix("[["), parts[0].hasSuffix("]]") {
+                        userLinks.append(UserLink(target: String(parts[0].dropFirst(2).dropLast(2)), reason: parts[1]))
+                    }
                 default:
                     break
                 }
@@ -253,7 +269,8 @@ enum ThoughtNote {
             summary: MemoryText.singleLine(summaryLines.joined(separator: " ")),
             timeline: timeline,
             evidence: evidence,
-            links: links
+            links: links,
+            userLinks: userLinks
         )
     }
 

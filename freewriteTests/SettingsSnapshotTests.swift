@@ -25,6 +25,7 @@ final class SettingsSnapshotTests: XCTestCase {
             settings.saveAPIKey("made-up-key-for-tests")
             settings.memoryEnabled = true
             memory.summary = MemorySummary(thoughts: 14, digestedEntries: 9, waitingEntries: 1)
+            memory.summary.lastTidy = "Tidied on Monday 9 November 2026: merged 1, retired 2, 1 pattern across weeks."
         }
     }
 

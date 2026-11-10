@@ -130,7 +130,7 @@ enum DigestParser {
     // MARK: - Strict readers
 
     /// A model without schema support may wrap its JSON in a ``` block. Nothing else is tolerated.
-    private static func stripCodeFence(_ text: String) -> String {
+    static func stripCodeFence(_ text: String) -> String {
         var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("```"), trimmed.hasSuffix("```"), trimmed.count >= 6 else {
             return trimmed
@@ -143,7 +143,7 @@ enum DigestParser {
     }
 
     /// An object with exactly these keys: none missing, none extra.
-    private static func dictionary(_ value: Any, named name: String, keys: Set<String>) throws -> [String: Any] {
+    static func dictionary(_ value: Any, named name: String, keys: Set<String>) throws -> [String: Any] {
         guard let object = value as? [String: Any] else {
             throw DigestParseError(reason: "\(name) was not an object.")
         }
@@ -153,28 +153,28 @@ enum DigestParser {
         return object
     }
 
-    private static func string(_ object: [String: Any], _ key: String) throws -> String {
+    static func string(_ object: [String: Any], _ key: String) throws -> String {
         guard let value = object[key] as? String else {
             throw DigestParseError(reason: "\(key) was not text.")
         }
         return value
     }
 
-    private static func optionalString(_ object: [String: Any], _ key: String) throws -> String? {
+    static func optionalString(_ object: [String: Any], _ key: String) throws -> String? {
         if object[key] is NSNull {
             return nil
         }
         return try string(object, key)
     }
 
-    private static func array(_ object: [String: Any], _ key: String) throws -> [Any] {
+    static func array(_ object: [String: Any], _ key: String) throws -> [Any] {
         guard let value = object[key] as? [Any] else {
             throw DigestParseError(reason: "\(key) was not a list.")
         }
         return value
     }
 
-    private static func strings(_ object: [String: Any], _ key: String) throws -> [String] {
+    static func strings(_ object: [String: Any], _ key: String) throws -> [String] {
         guard let value = object[key] as? [String] else {
             throw DigestParseError(reason: "\(key) was not a list of text.")
         }

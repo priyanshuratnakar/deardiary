@@ -7,6 +7,10 @@
 //  it. For a link it shows why the two thoughts are connected and the lines
 //  that show it. Clicking a day opens that entry.
 //
+//  Along the bottom of the panel, always in view, are the user's fixes:
+//  rename, merge, link, delete, and remove link. Anything that cannot be
+//  undone here asks for a second click.
+//
 //  Same quiet style as the talk column: no boxes, text in the page's font.
 //
 
@@ -18,26 +22,50 @@ struct MapDetailView: View {
     let style: MapStyle
     let onOpenEntry: (UUID) -> Void
 
+    /// What is being typed for a rename or a link's reason.
+    @State private var draft = ""
+    /// True while the line being typed in has the keyboard.
+    @FocusState private var isTyping: Bool
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    switch selection {
+                    case .thought(let id):
+                        if let detail = model.thoughtDetail(id) {
+                            thought(detail)
+                        }
+                    case .link(let id):
+                        if let detail = model.linkDetail(id) {
+                            link(detail)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.top, 40)
+                .padding(.bottom, 20)
+            }
+            .scrollIndicators(.never)
+
+            // The fixes stay in view however long the panel is.
+            VStack(alignment: .leading, spacing: 8) {
                 switch selection {
                 case .thought(let id):
                     if let detail = model.thoughtDetail(id) {
-                        thought(detail)
+                        thoughtFixes(detail)
                     }
                 case .link(let id):
                     if let detail = model.linkDetail(id) {
-                        link(detail)
+                        linkFixes(detail)
                     }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 20)
-            .padding(.top, 40)
-            .padding(.bottom, 20)
+            .padding(.vertical, 24)
         }
-        .scrollIndicators(.never)
         .background(style.backgroundColor)
     }
 
@@ -116,6 +144,71 @@ struct MapDetailView: View {
             : "First seen \(Prompts.longDay(first)) · last seen \(Prompts.longDay(last))"
     }
 
+    // MARK: - Fixes for a thought
+
+    @ViewBuilder
+    private func thoughtFixes(_ detail: MapThoughtDetail) -> some View {
+        switch model.pending {
+        case .renaming(let id) where id == detail.id:
+            typed(
+                prompt: "A new name",
+                confirm: "Save",
+                onConfirm: { run(.rename(id: detail.id, to: draft)) }
+            )
+
+        case .pickingMergeTarget(let source) where source == detail.id:
+            waiting("Click the thought to fold this one into.")
+
+        case .confirmingMerge(let source, let target) where source == detail.id:
+            confirmation(
+                "Fold “\(detail.label)” into “\(model.label(of: target))”? Its lines, links and names move over. This cannot be undone here.",
+                confirm: "Merge",
+                onConfirm: { run(.merge(from: source, into: target)) }
+            )
+
+        case .pickingLinkTarget(let source) where source == detail.id:
+            waiting("Click the thought to link this one to.")
+
+        case .reasonForLink(let source, let target) where source == detail.id:
+            VStack(alignment: .leading, spacing: 8) {
+                small("How are “\(detail.label)” and “\(model.label(of: target))” linked?")
+                typed(
+                    prompt: "A few words, such as: helps with",
+                    confirm: "Add link",
+                    onConfirm: { run(.addLink(from: source, to: target, reason: draft)) }
+                )
+            }
+
+        case .confirmingDelete(let id) where id == detail.id:
+            confirmation(
+                "Delete “\(detail.label)”? It is removed from memory and the AI will not bring it back. Your entries are not touched.",
+                confirm: "Delete",
+                onConfirm: { run(.delete(id: detail.id)) }
+            )
+
+        default:
+            HStack(spacing: 8) {
+                MapWord(title: "Rename", style: style) {
+                    draft = detail.label
+                    model.pending = .renaming(detail.id)
+                }
+                Text("•").foregroundColor(.gray)
+                MapWord(title: "Merge into…", style: style) {
+                    model.pending = .pickingMergeTarget(source: detail.id)
+                }
+                Text("•").foregroundColor(.gray)
+                MapWord(title: "Link to…", style: style) {
+                    draft = ""
+                    model.pending = .pickingLinkTarget(source: detail.id)
+                }
+                Text("•").foregroundColor(.gray)
+                MapWord(title: "Delete", style: style) {
+                    model.pending = .confirmingDelete(detail.id)
+                }
+            }
+        }
+    }
+
     // MARK: - A link
 
     @ViewBuilder
@@ -130,10 +223,14 @@ struct MapDetailView: View {
                     model.selection = .thought(detail.secondID)
                 }
             }
-            Text(detail.reasons.joined(separator: "; "))
+            Text(detail.reasons.isEmpty ? "linked" : detail.reasons.joined(separator: "; "))
                 .font(.custom(style.fontName, size: 20))
                 .foregroundColor(style.bodyColor)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+
+        if !detail.linkedByYou.isEmpty {
+            small("Linked by you. There is no quoted line behind this.")
         }
 
         if !detail.days.isEmpty {
@@ -143,7 +240,85 @@ struct MapDetailView: View {
         }
     }
 
+    // MARK: - Fixes for a link
+
+    @ViewBuilder
+    private func linkFixes(_ detail: MapLinkDetail) -> some View {
+        if model.pending == .confirmingRemoveLink(detail.id) {
+            confirmation(
+                "Remove the link between “\(detail.firstLabel)” and “\(detail.secondLabel)”? The AI will not put it back.",
+                confirm: "Remove",
+                onConfirm: { run(.removeLink(detail.firstID, detail.secondID)) }
+            )
+        } else {
+            MapWord(title: "Remove link", style: style) {
+                model.pending = .confirmingRemoveLink(detail.id)
+            }
+        }
+    }
+
     // MARK: - Pieces
+
+    private func run(_ fix: MemoryFix) {
+        Task { await model.perform(fix) }
+    }
+
+    /// A line of instruction while the app waits for a click on the map.
+    private func waiting(_ instruction: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            paragraph(instruction)
+            MapWord(title: "Cancel", style: style) {
+                model.pending = nil
+            }
+        }
+    }
+
+    /// A question asked in place, with a word to go ahead and a word to back out.
+    private func confirmation(_ question: String, confirm: String, onConfirm: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            paragraph(question)
+            HStack(spacing: 8) {
+                MapWord(title: confirm, style: style, action: onConfirm)
+                Text("•").foregroundColor(.gray)
+                MapWord(title: "Cancel", style: style) {
+                    model.pending = nil
+                }
+            }
+        }
+    }
+
+    /// A line to type in, with a word to save and a word to back out. Return also saves.
+    private func typed(prompt: String, confirm: String, onConfirm: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField(
+                prompt,
+                text: $draft,
+                prompt: Text(prompt).foregroundColor(style.isLight ? .gray.opacity(0.5) : .gray.opacity(0.6))
+            )
+            .textFieldStyle(.plain)
+            .font(.custom(style.fontName, size: 14))
+            .foregroundColor(style.bodyColor)
+            .focused($isTyping)
+            .onAppear { isTyping = true }
+            .onSubmit {
+                if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    onConfirm()
+                }
+            }
+
+            HStack(spacing: 8) {
+                MapWord(title: confirm, style: style) {
+                    if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        onConfirm()
+                    }
+                }
+                Text("•").foregroundColor(.gray)
+                MapWord(title: "Cancel", style: style) {
+                    model.pending = nil
+                }
+            }
+        }
+    }
 
     /// Quoted lines, grouped under the day they were written. The day opens the entry.
     private func days(_ days: [MapDayQuotes]) -> some View {

@@ -212,6 +212,13 @@ struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            if let lastTidy = memoryStatus.summary.lastTidy {
+                Text(lastTidy)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             if let rebuildCount {
                 confirmation(
                     "This sends \(rebuildCount) \(rebuildCount == 1 ? "entry" : "entries") to Claude and replaces what it has learned. Your fixes are kept.",
@@ -250,6 +257,15 @@ struct SettingsView: View {
                                 rebuildCount = await memoryActions.countForRebuild()
                             }
                         }
+                    }
+                    Text("•").foregroundColor(.gray)
+                    SettingsWordButton(
+                        title: "Tidy memory now",
+                        quietColor: quietColor,
+                        strongColor: strongColor,
+                        isDisabled: memoryStatus.summary.isWorking || !(settings.aiEnabled && settings.memoryEnabled && settings.hasAPIKey)
+                    ) {
+                        memoryActions.tidy()
                     }
                     Text("•").foregroundColor(.gray)
                     SettingsWordButton(title: "Open memory folder", quietColor: quietColor, strongColor: strongColor) {
@@ -368,6 +384,7 @@ struct MemoryActions {
     var refresh: () -> Void
     var countForRebuild: () async -> Int
     var rebuild: () -> Void
+    var tidy: () -> Void
     var stop: () -> Void
     var forget: () -> Void
     var openFolder: () -> Void
@@ -376,6 +393,7 @@ struct MemoryActions {
         refresh: { Task { await MemoryEngine.shared.refreshStatus() } },
         countForRebuild: { await MemoryEngine.shared.entriesToRebuild() },
         rebuild: { Task { await MemoryEngine.shared.rebuild() } },
+        tidy: { Task { await MemoryEngine.shared.tidy(force: true) } },
         stop: { Task { await MemoryEngine.shared.stop() } },
         forget: { Task { await MemoryEngine.shared.forgetEverything() } },
         openFolder: { NSWorkspace.shared.open(MemoryStore().ensureFolder()) }
@@ -385,6 +403,7 @@ struct MemoryActions {
         refresh: {},
         countForRebuild: { 0 },
         rebuild: {},
+        tidy: {},
         stop: {},
         forget: {},
         openFolder: {}

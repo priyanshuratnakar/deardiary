@@ -38,7 +38,15 @@ final class MemorySandbox: @unchecked Sendable {
         clock = now
     }
 
-    func engine(_ provider: FakeProvider, limits: MemoryLimits = MemoryLimits()) -> MemoryEngine {
+    /// Limits for tests: as in the app, except that a rebuild does not end with a tidy
+    /// (tests that are about the tidy switch it back on).
+    static var quietLimits: MemoryLimits {
+        var limits = MemoryLimits()
+        limits.tidyAfterRebuild = false
+        return limits
+    }
+
+    func engine(_ provider: FakeProvider, limits: MemoryLimits = MemorySandbox.quietLimits) -> MemoryEngine {
         MemoryEngine(environment: MemoryEnvironment(
             isEnabled: { [unowned self] in self.enabled },
             enabledSince: { [unowned self] in self.enabledSince },

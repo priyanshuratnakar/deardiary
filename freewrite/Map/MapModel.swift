@@ -20,6 +20,17 @@ enum MapSelection: Equatable {
     case link(String)
 }
 
+/// A fix that is part-way through: waiting for a name, a second thought, a reason, or a second click.
+enum MapPending: Equatable {
+    case renaming(String)
+    case pickingMergeTarget(source: String)
+    case confirmingMerge(source: String, target: String)
+    case pickingLinkTarget(source: String)
+    case reasonForLink(source: String, target: String)
+    case confirmingDelete(String)
+    case confirmingRemoveLink(String)
+}
+
 /// The lines quoted from one entry, for the detail panel.
 struct MapDayQuotes: Equatable, Identifiable {
     let entryID: UUID
@@ -66,6 +77,8 @@ struct MapLinkDetail: Equatable {
     let secondID: String
     let secondLabel: String
     let reasons: [String]
+    /// Reasons for links the user made by hand. These have no quoted lines.
+    let linkedByYou: [String]
     let days: [MapDayQuotes]
 }
 
@@ -73,7 +86,16 @@ struct MapLinkDetail: Equatable {
 final class MapModel: ObservableObject {
     @Published private(set) var graph = MemoryGraph()
     @Published private(set) var isLoading = true
-    @Published var selection: MapSelection? = nil
+    @Published var selection: MapSelection? = nil {
+        didSet {
+            // Looking at something else drops a fix that was part-way through.
+            if oldValue != selection {
+                pending = nil
+            }
+        }
+    }
+    /// A fix that is part-way through, if any.
+    @Published var pending: MapPending? = nil
     @Published var hoveredThought: String? = nil
     /// Set while the pointer is over a kind in the legend: only that kind stands out.
     @Published var highlightedKind: ThoughtKind? = nil
@@ -83,6 +105,7 @@ final class MapModel: ObservableObject {
 
     private(set) var memory = MemorySnapshot()
     private let store: MemoryStore
+    private let applyFix: (MemoryFix) async -> Bool
     private var neighbours: [String: Set<String>] = [:]
     private var draggedThought: String? = nil
     private var panAtDragStart: CGSize = .zero
@@ -93,8 +116,37 @@ final class MapModel: ObservableObject {
 
     static let zoomRange: ClosedRange<CGFloat> = 0.25...4
 
-    init(store: MemoryStore = MemoryStore()) {
+    init(
+        store: MemoryStore = MemoryStore(),
+        applyFix: @escaping (MemoryFix) async -> Bool = { await MemoryEngine.shared.fix($0) }
+    ) {
         self.store = store
+        self.applyFix = applyFix
+    }
+
+    // MARK: - The user's fixes
+
+    /// Makes one of the user's fixes, then shows memory as it now stands.
+    func perform(_ fix: MemoryFix) async {
+        pending = nil
+        guard await applyFix(fix) else { return }
+        await load()
+
+        switch fix {
+        case .rename(let id, _):
+            selection = .thought(id)
+        case .merge(_, let into):
+            selection = .thought(into)
+        case .addLink(let from, let to, _):
+            selection = .link(GraphEdge.id(from, to))
+        case .delete, .removeLink:
+            selection = nil
+        }
+        pending = nil
+    }
+
+    func label(of id: String) -> String {
+        memory.thoughts[id]?.label ?? id
     }
 
     // MARK: - Loading
@@ -231,6 +283,26 @@ final class MapModel: ObservableObject {
     }
 
     func tap(at point: CGPoint, in size: CGSize) {
+        // Part-way through a merge or a link, a click picks the other thought.
+        switch pending {
+        case .pickingMergeTarget(let source):
+            if let id = thought(at: point, in: size), id != source {
+                pending = .confirmingMerge(source: source, target: id)
+            } else {
+                pending = nil
+            }
+            return
+        case .pickingLinkTarget(let source):
+            if let id = thought(at: point, in: size), id != source {
+                pending = .reasonForLink(source: source, target: id)
+            } else {
+                pending = nil
+            }
+            return
+        default:
+            break
+        }
+
         if let id = thought(at: point, in: size) {
             selection = .thought(id)
         } else if let id = link(at: point, in: size) {
@@ -321,6 +393,9 @@ final class MapModel: ObservableObject {
         if highlightedKind != nil {
             return 0.25
         }
+        if isPickingAnotherThought {
+            return 0.8
+        }
         if case .link(let id) = selection, hoveredThought == nil {
             return id == edge.id ? 1 : 0.25
         }
@@ -333,8 +408,28 @@ final class MapModel: ObservableObject {
         return nil
     }
 
+    /// True while a merge or a link is waiting for a click on the other thought.
+    private var isPickingAnotherThought: Bool {
+        switch pending {
+        case .pickingMergeTarget, .pickingLinkTarget:
+            return true
+        default:
+            return false
+        }
+    }
+
     /// The thoughts that stand out, or nil when everything is drawn the same.
     private var focusedThoughts: Set<String>? {
+        // Part-way through a merge or a link, any thought can be clicked, so none is
+        // faded. Once the other thought is picked, the two stand out together.
+        switch pending {
+        case .pickingMergeTarget, .pickingLinkTarget:
+            return nil
+        case .confirmingMerge(let source, let target), .reasonForLink(let source, let target):
+            return [source, target]
+        default:
+            break
+        }
         if let hovered = hoveredThought {
             return (neighbours[hovered] ?? []).union([hovered])
         }
@@ -420,7 +515,7 @@ final class MapModel: ObservableObject {
             }
 
             taken.append(rect)
-            placed.append(PlacedLabel(thoughtID: node.id, label: node.label, point: point, size: textSize, isFocus: isFocus && hasFocus(node.id)))
+            placed.append(PlacedLabel(thoughtID: node.id, label: node.label, point: point, size: textSize, isFocus: (isFocus || isPickingAnotherThought) && hasFocus(node.id)))
         }
         return placed
     }
@@ -462,8 +557,14 @@ final class MapModel: ObservableObject {
         for link in thought.links {
             add(link.target, link.reason)
         }
+        for link in thought.userLinks {
+            add(link.target, link.reason)
+        }
         for other in memory.thoughts.values {
             for link in other.links where link.target == id {
+                add(other.id, link.reason)
+            }
+            for link in other.userLinks where link.target == id {
                 add(other.id, link.reason)
             }
         }
@@ -500,6 +601,7 @@ final class MapModel: ObservableObject {
             secondID: second.id,
             secondLabel: second.label,
             reasons: edge.reasons,
+            linkedByYou: (first.userLinks.filter { $0.target == second.id } + second.userLinks.filter { $0.target == first.id }).map(\.reason),
             days: Self.days(from: evidence.map { ($0.entryID, $0.date, $0.quote) })
         )
     }

@@ -150,6 +150,11 @@ enum MemoryApplier {
 
             // Reuse before create: does anything in memory already go by one of these names?
             var targetID = names.lazy.compactMap { known[MemoryText.normalizedName($0)] }.first.map(pins.resolve)
+            // The user's fixes can also say where a name belongs (a thought they renamed, or folded into another).
+            let pinnedID = names.lazy.compactMap(pins.pinnedID(forName:)).first
+            if targetID == nil, let pinnedID, memory.thoughts[pinnedID] != nil {
+                targetID = pinnedID
+            }
             if targetID == nil {
                 // Same file name as an existing thought, or one the user merged away: use that thought.
                 let slug = pins.resolve(MemoryText.slug(label))
@@ -169,7 +174,7 @@ enum MemoryApplier {
                 continue
             }
 
-            var id = pins.resolve(MemoryText.slug(label))
+            var id = pinnedID ?? pins.resolve(MemoryText.slug(label))
             guard !pins.isDeleted(id) else {
                 reject("new_thought", "You deleted this thought.")
                 continue
@@ -184,7 +189,7 @@ enum MemoryApplier {
 
             let thought = Thought(
                 id: id,
-                label: pins.pinnedLabel(for: id) ?? label,
+                label: pins.pinnedLabel(for: id) ?? pins.mergeTargetLabel(for: id) ?? label,
                 kind: new.kind,
                 aliases: [],
                 summary: MemoryText.singleLine(new.summary),
@@ -192,7 +197,8 @@ enum MemoryApplier {
             )
             memory.thoughts[id] = thought
             register(thought, in: &known)
-            addAliases(new.aliases, to: id)
+            // If the user's name was used instead, the AI's name stays on as another name for it.
+            addAliases(thought.label == label ? new.aliases : [label] + new.aliases, to: id)
             createdByName[MemoryText.normalizedName(label)] = id
             touched.insert(id)
         }
@@ -278,12 +284,7 @@ enum MemoryApplier {
         }
 
         // 6. The user's fixes have the last word.
-        dropThoughts(where: { pins.isDeleted($0.id) }, from: &memory)
-        for id in memory.thoughts.keys {
-            if let pinned = pins.pinnedLabel(for: id) {
-                memory.thoughts[id]?.label = pinned
-            }
-        }
+        MemoryFixes.enforce(pins, on: &memory)
 
         outcome.touched = touched.filter { memory.thoughts[$0] != nil }.sorted()
         return outcome

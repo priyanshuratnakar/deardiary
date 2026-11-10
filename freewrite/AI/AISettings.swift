@@ -30,6 +30,8 @@ enum AILimits {
     static let talkMaxTokens = 16_000
     /// A digest is a page or so of JSON, plus the model's private thinking.
     static let digestMaxTokens = 16_000
+    /// The weekly tidy looks across all of memory, so its reply can be longer.
+    static let tidyMaxTokens = 24_000
 }
 
 final class AISettings: ObservableObject {

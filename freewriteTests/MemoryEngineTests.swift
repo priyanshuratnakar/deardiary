@@ -328,7 +328,7 @@ import Testing
         sandbox.writeEntry(MemoryWeek.wednesday)
         sandbox.writeEntry(MemoryWeek.friday)
         let provider = FakeProvider([.reply([DigestJSON.reply()]), .reply([DigestJSON.reply()]), .reply([DigestJSON.reply()])])
-        var limits = MemoryLimits()
+        var limits = MemorySandbox.quietLimits
         limits.dailyRequests = 2
         let engine = sandbox.engine(provider, limits: limits)
 
@@ -381,7 +381,7 @@ import Testing
         for entry in MemoryWeek.entries {
             sandbox.writeEntry(entry)
         }
-        var limits = MemoryLimits()
+        var limits = MemorySandbox.quietLimits
         limits.dailyRequests = 1
         let provider = FakeProvider(MemoryWeek.replies.map { .reply([$0]) })
 

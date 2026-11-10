@@ -3,8 +3,7 @@
 //  Dear Diary
 //
 //  Every prompt the app sends to the AI lives in this file, so the wording can
-//  be read and edited in one place. The consolidate prompt will be added
-//  here when that feature arrives.
+//  be read and edited in one place.
 //
 
 import Foundation
@@ -255,5 +254,90 @@ enum Prompts {
         let others = thought.aliases.isEmpty ? "-" : thought.aliases.joined(separator: "; ")
         let summary = thought.summary.isEmpty ? "-" : thought.summary
         return "- \(thought.id) | \(thought.label) | \(thought.kind.rawValue) | \(others) | \(summary)"
+    }
+
+    // MARK: - Memory: the weekly tidy
+
+    /// How the AI looks across all of memory, about once a week. The app checks
+    /// every proposal afterwards (see MemoryTidier), so nothing here is taken on trust.
+    static let tidySystem = """
+    You look after a private memory built from one person's journal. Their entries were read one at a time. Your job is the weekly tidy: looking across all of it for what a single entry could not show.
+
+    You are given the profile, every thought in memory with some of its quoted lines (each with the id and the day of the entry it came from), the links between thoughts, and summaries of recent entries. Reply with JSON in the required shape and nothing else.
+
+    Merge duplicates
+    - If two thoughts are clearly the same thing under different names, fold the less established one into the other, using their ids.
+    - Merge only when you are sure. Two things that often appear together are not the same thing. When unsure, leave them apart.
+    - Never merge two different people.
+
+    Retire one-offs
+    - List the ids of thoughts that came up in a single entry some weeks ago, never returned, and are not connected to anything that matters now. The app decides whether each one really qualifies.
+
+    Patterns across weeks
+    - Look for what recurs across several entries, or for one thing that reliably goes with another.
+    - A pattern that deserves its own thought goes in patterns, with a short plain label of two to five words and one or two sentences on what it is. If a thought for it already exists, do not create another.
+    - A relationship between two thoughts goes in links, with the reason in a few plain words, such as "shows up whenever", "in tension with", "led to" or "eases".
+    - Every pattern and every link needs quoted lines from at least two different entries. Copy each quote exactly as it is given to you, together with the id of the entry it came from. Do not write new quotes and do not change a word.
+    - Prefer a few solid observations to many thin ones. Finding none is fine.
+
+    Profile
+    - Rewrite the profile if it no longer matches memory: what is on their mind lately, patterns that have held over weeks, and the people and projects that matter. At most 150 words of plain prose, written about them as "they". Otherwise return null.
+    - Put nothing in the profile that the thoughts do not support.
+
+    Tone
+    - Describe, do not judge. Do not diagnose or label them or anyone else with a condition. Prefer their words to clinical ones.
+
+    The reply is one JSON object with exactly these fields:
+    - merges: a list of {from, into}.
+    - retire: a list of thought ids.
+    - patterns: a list of {label, kind, summary, evidence}. evidence is a list of {entry_id, quote}. kind is one of theme, feeling, person, idea, question, decision, event.
+    - links: a list of {from, to, reason, evidence}, with evidence as above.
+    - profile: the rewritten profile, or null.
+    Lists may be empty.
+    """
+
+    /// The material for one tidy: the profile, every thought with its recent quotes and links, and recent entry summaries.
+    static func tidyMessage(profile: String, thoughts: [Thought], recentDigests: [EntryDigest], today: Date) -> String {
+        let profileText = profile.trimmingCharacters(in: .whitespacesAndNewlines)
+        var lines: [String] = [
+            "Today is \(longDay(today)).",
+            "",
+            "Profile:",
+            profileText.isEmpty ? "(none yet)" : profileText,
+            "",
+            "Thoughts in memory (id | label | kind | other names | number of entries | first seen | last seen | what it is):",
+        ]
+
+        for thought in thoughts.sorted(by: { $0.id < $1.id }) {
+            let others = thought.aliases.isEmpty ? "-" : thought.aliases.joined(separator: "; ")
+            let entries = Set(thought.evidence.map(\.entryID)).count
+            lines.append("- \(thought.id) | \(thought.label) | \(thought.kind.rawValue) | \(others) | \(entries) | \(thought.firstSeen ?? "-") | \(thought.lastSeen ?? "-") | \(thought.summary.isEmpty ? "-" : thought.summary)")
+            for item in thought.evidence.sorted(by: { ($0.date, $0.quote) < ($1.date, $1.quote) }).suffix(6) {
+                lines.append("    quote [\(item.entryID.uuidString)] \(item.date): \"\(MemoryText.singleLine(item.quote))\"")
+            }
+            for link in thought.links.sorted(by: { ($0.target, $0.date) < ($1.target, $1.date) }) {
+                lines.append("    linked to \(link.target) (\(link.reason)), \(link.date)")
+            }
+            for link in thought.userLinks {
+                lines.append("    linked to \(link.target) by the person themselves (\(link.reason))")
+            }
+        }
+        if thoughts.isEmpty {
+            lines.append("(none yet)")
+        }
+
+        lines.append("")
+        lines.append("Recent entries (day [entry id]: summary):")
+        let recent = recentDigests
+            .filter { !$0.failed && !$0.summary.isEmpty }
+            .sorted { ($0.entryDate, $0.entryID.uuidString) < ($1.entryDate, $1.entryID.uuidString) }
+            .suffix(40)
+        for digest in recent {
+            lines.append("- \(digest.entryDate) [\(digest.entryID.uuidString)]: \(digest.summary)")
+        }
+        if recent.isEmpty {
+            lines.append("(none yet)")
+        }
+        return lines.joined(separator: "\n")
     }
 }
