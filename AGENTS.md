@@ -349,7 +349,7 @@ Plain HTTP to `localhost` works from the sandboxed app with the entitlement it a
 
 Messages: every line that used to say "Claude" now names the service in use. `docs/messages.md` lists them all.
 
-Tests: `ProviderTests.swift` (the settings for each service, the gates, both new clients, Claude's model list, the router, the model catalogue, the thinking filter, messages per service) and more pictures in `SettingsSnapshotTests.swift` (every service and the states in between). `StubURLProtocol` can now keep canned replies apart by host (`install(forHost:)`), so the suites for different clients run side by side. `SettingsBox` in `ProviderTestSupport.swift` gives throwaway settings with their own Keychain items. Nothing has been tried against a real OpenAI or Ollama server.
+Tests: `ProviderTests.swift` (the settings for each service, the gates, both new clients, Claude's model list, the router, the model catalogue, the thinking filter, messages per service) and more pictures in `SettingsSnapshotTests.swift` (every service and the states in between). `StubURLProtocol` can now keep canned replies apart by host (`install(forHost:)`), so the suites for different clients run side by side. `SettingsBox` in `ProviderTestSupport.swift` gives throwaway settings with their own Keychain items. Ollama was tried for real on 11 Nov 2026 (Ollama 0.40, the small `llama3.2` model, made-up text only, through the app's own `OllamaProvider`): the model list, a streamed talk reply and three digests in the required shape all worked, and every quote was found in the entry. Nothing has been tried against a real OpenAI server.
 
 ### M9: memory you can see
 
@@ -475,6 +475,8 @@ Changes in `ContentView.swift` (all marked): the opening lines, the text size ti
 Tests: `PageLookTests.swift` (the font order, the opening lines, every mark has its picture, the licence is in the app, and the real window's buttons: the tests run inside the app, so they check its real window shows the buttons and that they step back and return). `PageSnapshotTests.swift` gains History on the left, an empty page with its opening line, and every mark in both modes. A picture drawn off screen has no window around it, so `InsideAWindow` adds the 32 point strip and three plain circles standing in for the buttons macOS draws.
 
 Not tried by hand: the names on hover, the buttons coming back when the pointer reaches the top strip, going in and out of fullscreen, and how the real buttons sit above History.
+
+**The app icon** (added after M11) is the owner's own "DD" mark on a black rounded square, on Apple's grid for a Mac icon (an 824 point square in a 1024 point canvas, with a soft shadow). The files in `Assets.xcassets/AppIcon.appiconset` keep freewrite's file names, so `Contents.json` is unchanged.
 
 ## Product Vision & User Experience
 
