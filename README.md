@@ -41,6 +41,8 @@ The pictures on this page are drawn by the app's own tests, with made-up entries
 - No accounts, no analytics, no cloud.
 - The lock covers Dear Diary's windows. It does not encrypt the files, which are protected by your Mac's own login.
 
+<img src="docs/pictures/lock.png" width="560" alt="The locked window">
+
 ## Getting it
 
 There is no download yet. For now you build it yourself.
