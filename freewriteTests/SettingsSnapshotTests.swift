@@ -178,16 +178,39 @@ final class SettingsSnapshotTests: XCTestCase {
         }
     }
 
+    // MARK: - The lock
+
+    @MainActor
+    func testSettingsWithTheLockOn() throws {
+        try snapshot(named: "settings-light-lock-on", dark: false) { parts in
+            parts.versions.enabled = true
+            parts.lock.settings.enabled = true
+        }
+    }
+
+    @MainActor
+    func testSettingsWhenTheLockCannotBeTurnedOn() async throws {
+        let check = FakeAuthenticator()
+        check.available = false
+        let box = LockBox(on: false)
+        let lock = AppLock(settings: box.settings, authenticator: check, watchesTheMac: false)
+        await lock.setEnabled(true)
+
+        try snapshot(named: "settings-dark-lock-problem", dark: true, lock: lock) { _ in }
+        XCTAssertFalse(box.settings.enabled)
+    }
+
     private struct Parts {
         let settings: AISettings
         let memory: MemoryStatus
         let versions: VersionSettings
         let catalog: ModelCatalog
         let journalImport: JournalImport
+        let lock: AppLock
     }
 
     @MainActor
-    private func snapshot(named name: String, dark: Bool, configure: (Parts) -> Void) throws {
+    private func snapshot(named name: String, dark: Bool, lock: AppLock? = nil, configure: (Parts) -> Void) throws {
         let box = SettingsBox()
         box.defaults.set(dark ? "dark" : "light", forKey: "colorScheme")
 
@@ -204,7 +227,9 @@ final class SettingsSnapshotTests: XCTestCase {
                 root: FileManager.default.temporaryDirectory.appendingPathComponent("DearDiary-Tests-\(UUID().uuidString)", isDirectory: true),
                 record: ImportRecord(defaults: box.defaults),
                 pickFolder: { nil }
-            )
+            ),
+            // A lock with throwaway settings and a pretend check, so macOS is never asked.
+            lock: lock ?? AppLock(settings: LockSettings(defaults: box.defaults), authenticator: FakeAuthenticator(), watchesTheMac: false)
         )
         configure(parts)
 
@@ -217,7 +242,8 @@ final class SettingsSnapshotTests: XCTestCase {
             versionActions: .none,
             catalog: parts.catalog,
             connection: FakeProvider(),
-            journalImport: parts.journalImport
+            journalImport: parts.journalImport,
+            lock: parts.lock
         )
         .defaultAppStorage(box.defaults)
 

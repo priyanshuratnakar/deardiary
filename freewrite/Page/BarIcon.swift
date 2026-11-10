@@ -26,6 +26,7 @@ struct BarIcon: View {
         case trash = "pika-trash"
         case download = "pika-download"
         case clock = "pika-clock"
+        case lock = "pika-lock"
         case backspace = "dd-backspace"
         case backspaceOff = "dd-backspace-off"
         case expand = "dd-expand"

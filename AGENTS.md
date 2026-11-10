@@ -478,6 +478,37 @@ Not tried by hand: the names on hover, the buttons coming back when the pointer 
 
 **The app icon** (added after M11) is the owner's own "DD" mark on a black rounded square, on Apple's grid for a Mac icon (an 824 point square in a 1024 point canvas, with a soft shadow). The files in `Assets.xcassets/AppIcon.appiconset` keep freewrite's file names, so `Contents.json` is unchanged.
 
+### M12: the lock
+
+The owner asked for this after M11. Dear Diary can open locked and ask macOS to check who is at the Mac: Touch ID where the Mac has it, the Mac's own password otherwise. It is off by default, like Talk, Memory and Versions. `ContentView.swift`, the entitlements and the project file were not touched.
+
+**What the lock is and is not.** It covers Dear Diary's windows. It does not encrypt anything: entries stay plain files in the journal folder, as the PRD's third principle asks, protected by the Mac's own login. Settings says so in one line. Never describe the lock as protecting the files.
+
+New files, all in `freewrite/Lock/`:
+
+- `LockSettings.swift`: the switch (`lock.enabled`) and how long Dear Diary may sit in the background before it locks (`lock.afterMinutes`: 1, 5, 15 or 30, default 5), in UserDefaults. Under test, `LockSettings.shared` is a throwaway copy and off, so the app under test never opens locked.
+- `Authenticator.swift`: the `Authenticator` protocol, its four answers (`allowed`, `cancelled`, `failed`, `unavailable`) and `DeviceOwnerAuthenticator`, which asks macOS through LocalAuthentication (`.deviceOwnerAuthentication`). Dear Diary never sees a fingerprint or a password; macOS draws the sheet and answers yes or no. This needs no entitlement.
+- `AppLock.swift`: the lock itself (`AppLock.shared`): `isLocked`, `isAsking` and `problem`.
+- `LockScreen.swift`: `LockScreen` (what a locked window shows) and `LockGate` (the modifier that puts it over a window).
+
+Rules the code follows (keep them when changing it):
+
+1. **Off means off.** With the lock off nothing locks, nothing is asked and nothing is shown.
+2. **When it closes:** when the app opens; when the Mac sleeps, its screen sleeps or locks, or another user takes over; when Dear Diary has been in the background for the chosen time (a timer closes it while it is still in the background, so the window is covered even if nobody comes back); and on "Lock now" in Settings.
+3. **Only macOS's answer opens it.** A sheet that was closed leaves it locked and says nothing. A check that does not pass shows one line. A Mac with no password cannot be checked at all, so the lock opens rather than keep the owner out, and says why.
+4. **When it asks without a click:** when the locked window first comes into view at launch, and when Dear Diary comes back to the front after locking in the background or after a trip away while locked. Never straight after "Lock now", and never straight after the sheet was closed: the trip to the background that macOS's own sheet causes (while `isAsking`) does not count. This is what stops a closed sheet from coming straight back, so be careful when changing `asksByItself`.
+5. **Covered means inert.** `LockGate` disables the window's content and hides it from VoiceOver, and closing the lock takes the keyboard away from whatever had it, so nothing typed while locked lands on the page. The content stays alive underneath, so unlocking returns to the same entry with History and talk as they were.
+6. **Both windows.** `freewriteApp.swift` adds `LockGate` to the journal window and to Settings. Settings is covered too because it can open the journal's folders, forget memory and switch the lock off.
+7. **Turning the lock off asks macOS first**, so only the Mac's owner can. Turning it on needs no check, only a Mac that can check, and does not lock straight away.
+8. **Background work carries on while locked** (memory, versions, a talk reply in progress). It reads files, not the screen.
+9. **The line on the locked window** ("for your eyes only") is `LockScreen.line`, the owner's to edit. The other lines are in `docs/messages.md`.
+
+`SettingsView` gains the Lock section between Versions and bringing entries across. The lock mark is `pika-lock`, from the free Pikaicons pack like the others.
+
+Tests: `LockTests.swift` (the settings, and the lock with a clock the test controls) and `LockSnapshotTests.swift` (the locked window in both modes, and over the real writing window to show nothing of the page is left in view). `FakeAuthenticator` and `LockBox` in `LockTestSupport.swift` play macOS's check from a script; no test ever asks for Touch ID or a password. Checked once on the owner's Mac, from inside the app and without showing anything: macOS can check the owner and Touch ID is ready. Never tried: the real sheet, and the lock closing on a real sleep, screen lock or time in the background.
+
+Not built: a menu item or shortcut to lock, and any encryption of the files.
+
 ## Product Vision & User Experience
 
 ### What is Freewrite?

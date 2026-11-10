@@ -32,6 +32,8 @@ struct freewriteApp: App {
             ContentView()
                 // Dear Diary: freewrite hid the window toolbar here, which also hid the red, yellow
                 // and green buttons. They show now, and WindowButtons lets them step back with the bar.
+                // Dear Diary: the lock covers this window while it is closed. It is off unless switched on in Settings.
+                .modifier(LockGate())
                 .preferredColorScheme(colorSchemeString == "dark" ? .dark : .light)
         }
         .windowStyle(.hiddenTitleBar)
@@ -42,6 +44,8 @@ struct freewriteApp: App {
         // Dear Diary: the Settings window, opened from the app menu (Settings…, ⌘,).
         Settings {
             SettingsView()
+                // Dear Diary: Settings is covered too while the lock is closed.
+                .modifier(LockGate())
                 .preferredColorScheme(colorSchemeString == "dark" ? .dark : .light)
         }
     }

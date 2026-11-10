@@ -23,6 +23,8 @@ struct SettingsView: View {
     /// What "Test connection" talks to. Tests pass a pretend service.
     private let connection: LLMProvider
     @ObservedObject private var journalImport: JournalImport
+    @ObservedObject private var lock: AppLock
+    @ObservedObject private var lockSettings: LockSettings
     @AppStorage("colorScheme") private var colorSchemeString: String = "light"
 
     /// The app always uses the shared settings and the real memory engine.
@@ -37,7 +39,8 @@ struct SettingsView: View {
         versionActions: VersionActions = .live,
         catalog: ModelCatalog? = nil,
         connection: LLMProvider = AIRouter.shared,
-        journalImport: JournalImport? = nil
+        journalImport: JournalImport? = nil,
+        lock: AppLock? = nil
     ) {
         self.settings = settings
         self.memoryStatus = memoryStatus
@@ -48,6 +51,9 @@ struct SettingsView: View {
         self.catalog = catalog ?? .shared
         self.connection = connection
         self.journalImport = journalImport ?? .shared
+        let lock = lock ?? .shared
+        self.lock = lock
+        self.lockSettings = lock.settings
     }
 
     @State private var keyDraft = ""
@@ -86,6 +92,8 @@ struct SettingsView: View {
             testSection
             Divider()
             versionsSection
+            Divider()
+            lockSection
             Divider()
             movingInSection
         }
@@ -621,7 +629,7 @@ struct SettingsView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if versions.enabled {
-                Text("Open them from the small arrow beside an entry in History.")
+                Text("Open them from the small clock beside an entry in History.")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -636,6 +644,58 @@ struct SettingsView: View {
 
             SettingsWordButton(title: "Open versions folder", quietColor: quietColor, strongColor: strongColor) {
                 versionActions.openFolder()
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    // MARK: - The lock
+
+    private var lockSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SettingsWordButton(
+                title: lockSettings.enabled ? "Lock is On" : "Lock is Off",
+                quietColor: quietColor,
+                strongColor: strongColor,
+                isDisabled: lock.isAsking
+            ) {
+                // Turning it off asks macOS first, so only the Mac's owner can.
+                Task { await lock.setEnabled(!lockSettings.enabled) }
+            }
+
+            Text("When the lock is on, Dear Diary opens locked and asks for Touch ID or your Mac password. It locks again when your Mac sleeps and when it has been in the background for a while.")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if lockSettings.enabled {
+                HStack(spacing: 8) {
+                    SettingsWordButton(title: "Lock now", quietColor: quietColor, strongColor: strongColor) {
+                        lock.lockNow()
+                    }
+                    Text("•").foregroundColor(.gray)
+                    Text("Lock after")
+                        .font(.system(size: 13))
+                        .foregroundColor(quietColor)
+                    // Each click steps to the next choice.
+                    SettingsWordButton(title: lockSettings.delayInWords, quietColor: bodyColor, strongColor: strongColor) {
+                        lockSettings.stepDelay()
+                    }
+                }
+
+                Text("The lock covers Dear Diary's windows. Your entries stay plain files in your journal folder, protected by your Mac's own login.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let problem = lock.problem {
+                Text(problem)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

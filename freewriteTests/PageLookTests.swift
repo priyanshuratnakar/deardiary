@@ -73,7 +73,7 @@ import Testing
         let names = BarIcon.Kind.allCases.map(\.rawValue)
 
         #expect(names.allSatisfy { $0.hasPrefix("pika-") || $0.hasPrefix("dd-") })
-        #expect(names.filter { $0.hasPrefix("pika-") }.count == 9)
+        #expect(names.filter { $0.hasPrefix("pika-") }.count == 10)
         #expect(Set(names).count == names.count)
     }
 
