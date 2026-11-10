@@ -8,6 +8,19 @@
 >
 > If one file is updated, mirror the same change in the other file immediately.
 
+## Dear Diary fork (read this first)
+
+This repo is **Dear Diary**, a personal fork of freewrite that adds an AI talk mode, a local AI-built memory and a map of that memory. The spec is `docs/PRD.md` and is the source of truth for the fork. Everything below this section describes the original freewrite code, which the fork keeps and builds around. Where this document and the code disagree, trust the code.
+
+What the fork has changed so far (M0: rename only, no behaviour change):
+
+- **App name**: the built app is `Dear Diary.app` (`PRODUCT_NAME = "Dear Diary"`). The Xcode project, target, scheme, source folder and Swift module are all still called `freewrite` (`PRODUCT_MODULE_NAME = freewrite`), so the build command below is unchanged and upstream changes stay easy to pull in.
+- **Bundle ID**: `com.priyanshuratnakar.deardiary` (test targets: `com.priyanshuratnakar.deardiaryTests` and `com.priyanshuratnakar.deardiaryUITests`).
+- **Signing**: automatic signing with the owner's personal Apple Development team. To build on another Mac, set your own team on the three targets.
+- **Where data really lives**: the app is sandboxed, so `Documents/Freewrite/` resolves to `~/Library/Containers/com.priyanshuratnakar.deardiary/Data/Documents/Freewrite/`. That is a different folder from the original freewrite app's container (`app.humansongs.freewrite`), so the two apps do not see each other's entries. The folder name `Freewrite` and the entry filename format are unchanged.
+- **Permission prompts** (camera, microphone, speech recognition) say "Dear Diary" instead of "Freewrite".
+- `LICENSE` (MIT, Farza's copyright notice) is kept as is.
+
 ## Product Vision & User Experience
 
 ### What is Freewrite?
@@ -336,9 +349,9 @@ Required entitlements in `freewrite.entitlements`:
 Privacy usage descriptions (in Xcode project build settings):
 
 ```
-INFOPLIST_KEY_NSCameraUsageDescription = "Freewrite needs camera access to record video entries."
-INFOPLIST_KEY_NSMicrophoneUsageDescription = "Freewrite needs microphone access to record audio with your video entries."
-INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Freewrite uses speech recognition to transcribe your video entries."
+INFOPLIST_KEY_NSCameraUsageDescription = "Dear Diary needs camera access to record video entries."
+INFOPLIST_KEY_NSMicrophoneUsageDescription = "Dear Diary needs microphone access to record audio with your video entries."
+INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Dear Diary uses speech recognition to show live captions while recording."
 ```
 
 ## Technical Nuances & Implementation Details
