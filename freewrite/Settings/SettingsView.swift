@@ -22,6 +22,7 @@ struct SettingsView: View {
     @ObservedObject private var catalog: ModelCatalog
     /// What "Test connection" talks to. Tests pass a pretend service.
     private let connection: LLMProvider
+    @ObservedObject private var journalImport: JournalImport
     @AppStorage("colorScheme") private var colorSchemeString: String = "light"
 
     /// The app always uses the shared settings and the real memory engine.
@@ -35,7 +36,8 @@ struct SettingsView: View {
         versionIndex: VersionIndex = SnapshotKeeper.shared.index,
         versionActions: VersionActions = .live,
         catalog: ModelCatalog? = nil,
-        connection: LLMProvider = AIRouter.shared
+        connection: LLMProvider = AIRouter.shared,
+        journalImport: JournalImport? = nil
     ) {
         self.settings = settings
         self.memoryStatus = memoryStatus
@@ -45,6 +47,7 @@ struct SettingsView: View {
         self.versionActions = versionActions
         self.catalog = catalog ?? .shared
         self.connection = connection
+        self.journalImport = journalImport ?? .shared
     }
 
     @State private var keyDraft = ""
@@ -83,6 +86,8 @@ struct SettingsView: View {
             testSection
             Divider()
             versionsSection
+            Divider()
+            movingInSection
         }
         .frame(width: 440)
         .background(backgroundColor)
@@ -631,6 +636,60 @@ struct SettingsView: View {
 
             SettingsWordButton(title: "Open versions folder", quietColor: quietColor, strongColor: strongColor) {
                 versionActions.openFolder()
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    // MARK: - Bringing entries from freewrite
+
+    private var movingInSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SettingsWordButton(
+                title: "Bring entries from freewrite…",
+                quietColor: quietColor,
+                strongColor: strongColor,
+                isDisabled: !journalImport.canChoose
+            ) {
+                Task { await journalImport.choose() }
+            }
+
+            Text("If you used freewrite before, pick its folder and your entries are copied into Dear Diary. The originals are left where they are.")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let line = journalImport.line {
+                Text(line)
+                    .font(.system(size: 13))
+                    .foregroundColor(bodyColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            switch journalImport.state {
+            case .found:
+                HStack(spacing: 8) {
+                    SettingsWordButton(title: journalImport.copyWord ?? "Copy", quietColor: quietColor, strongColor: strongColor) {
+                        journalImport.copy()
+                    }
+                    Text("•").foregroundColor(.gray)
+                    SettingsWordButton(title: "Cancel", quietColor: quietColor, strongColor: strongColor) {
+                        journalImport.cancel()
+                    }
+                }
+            case .copying:
+                SettingsWordButton(title: "Stop", quietColor: quietColor, strongColor: strongColor) {
+                    journalImport.stop()
+                }
+            case .done(let copied, _, _) where copied > 0:
+                Text("The AI has not read them. To include them in memory, use Rebuild memory above; it shows the count first.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            default:
+                EmptyView()
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

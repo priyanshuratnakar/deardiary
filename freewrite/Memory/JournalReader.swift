@@ -21,17 +21,43 @@ struct JournalEntryFile: Equatable {
 struct JournalReader {
     /// The journal folder. Tests pass a throwaway folder.
     let root: URL
-    /// freewrite's welcome guide. It is not the user's writing, so it is never digested.
+    /// The welcome page a new journal starts with. It is not the user's writing, so it is never digested.
     let welcomeText: String?
+    /// Welcome pages from before (freewrite's own guide), which a journal may still hold.
+    let earlierWelcomeTexts: [String]
 
-    init(root: URL = StorageRoot.url, welcomeText: String? = JournalReader.bundledWelcomeText()) {
+    init(
+        root: URL = StorageRoot.url,
+        welcomeText: String? = JournalReader.bundledWelcomeText(),
+        earlierWelcomeTexts: [String] = JournalReader.bundledEarlierWelcomeTexts()
+    ) {
         self.root = root
         self.welcomeText = welcomeText
+        self.earlierWelcomeTexts = earlierWelcomeTexts
     }
 
+    /// Dear Diary's welcome page.
     static func bundledWelcomeText() -> String? {
         guard let url = Bundle.main.url(forResource: "default", withExtension: "md") else { return nil }
         return try? String(contentsOf: url, encoding: .utf8)
+    }
+
+    /// freewrite's guide, which Dear Diary used as its welcome page before it had its own.
+    static func bundledEarlierWelcomeTexts() -> [String] {
+        guard let url = Bundle.main.url(forResource: "freewrite-welcome", withExtension: "md"),
+              let text = try? String(contentsOf: url, encoding: .utf8) else {
+            return []
+        }
+        return [text]
+    }
+
+    /// True if this is a welcome page, now or from before, rather than the user's own writing.
+    func isWelcome(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return ([welcomeText].compactMap { $0 } + earlierWelcomeTexts).contains {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed
+        }
     }
 
     /// Every entry in the journal folder, oldest first.
@@ -64,10 +90,7 @@ struct JournalReader {
         guard !trimmed.isEmpty, trimmed != "Video Entry", !hasVideo(file) else {
             return false
         }
-        if let welcome = welcomeText?.trimmingCharacters(in: .whitespacesAndNewlines), !welcome.isEmpty, trimmed == welcome {
-            return false
-        }
-        return true
+        return !isWelcome(text)
     }
 
     /// Video entries keep a .mov beside (or, in older layouts, near) their .md file.

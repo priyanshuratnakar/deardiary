@@ -4,9 +4,10 @@
 //
 //  Draws the Settings window off screen and attaches pictures of it to the
 //  test results, so its look can be checked without clicking through the app:
-//  AI off, each kind of service, and the states in between (no key yet,
-//  Ollama not running). It uses throwaway settings and a fixed model list, so
-//  the real preferences and keys are untouched and no service is asked.
+//  AI off, each kind of service, the states in between (no key yet, Ollama not
+//  running), and each step of bringing entries across from freewrite. It uses
+//  throwaway settings and a fixed model list, so the real preferences and keys
+//  are untouched and no service is asked.
 //
 
 import XCTest
@@ -130,11 +131,59 @@ final class SettingsSnapshotTests: XCTestCase {
 
     // MARK: - Drawing
 
+    // MARK: - Bringing entries from freewrite
+
+    /// What a folder of 42 made-up entries looks like once it has been looked through.
+    private static var madeUpPlan: ImportPlan {
+        let items = (1...40).map { number in
+            ImportPlan.Item(
+                filename: "[\(UUID().uuidString)]-[2025-03-\(String(format: "%02d", number % 28 + 1))-08-00-00].md",
+                videoPaths: number <= 3 ? ["Videos/made-up-\(number)"] : [],
+                bytes: number <= 3 ? 103_000_000 : 27_000
+            )
+        }
+        return ImportPlan(source: URL(fileURLWithPath: "/made-up/Freewrite"), items: items, alreadyHere: 2)
+    }
+
+    @MainActor
+    func testSettingsAfterAFreewriteFolderWasPicked() throws {
+        try snapshot(named: "settings-light-import-found", dark: false) { parts in
+            parts.journalImport.show(.found(Self.madeUpPlan))
+            XCTAssertEqual(parts.journalImport.line, "Found 42 entries and 3 videos (310 MB). 2 are already here.")
+            XCTAssertEqual(parts.journalImport.copyWord, "Copy 40 entries")
+        }
+    }
+
+    @MainActor
+    func testSettingsWhileEntriesAreBeingCopied() throws {
+        try snapshot(named: "settings-dark-import-copying", dark: true) { parts in
+            parts.journalImport.show(.copying(done: 11, total: 40))
+            XCTAssertEqual(parts.journalImport.line, "Copying 12 of 40…")
+        }
+    }
+
+    @MainActor
+    func testSettingsAfterEntriesWereCopied() throws {
+        try snapshot(named: "settings-light-import-done", dark: false) { parts in
+            parts.journalImport.show(.done(copied: 40, total: 40, failed: 0))
+            XCTAssertEqual(parts.journalImport.line, "Copied 40 entries. They are in History now.")
+        }
+    }
+
+    @MainActor
+    func testSettingsWhenThePickedFolderHasNoEntries() throws {
+        try snapshot(named: "settings-dark-import-nothing", dark: true) { parts in
+            parts.journalImport.show(.nothing)
+            XCTAssertEqual(parts.journalImport.line, "No freewrite entries in that folder. The folder is usually called Freewrite.")
+        }
+    }
+
     private struct Parts {
         let settings: AISettings
         let memory: MemoryStatus
         let versions: VersionSettings
         let catalog: ModelCatalog
+        let journalImport: JournalImport
     }
 
     @MainActor
@@ -149,7 +198,13 @@ final class SettingsSnapshotTests: XCTestCase {
             settings: box.settings(),
             memory: MemoryStatus(),
             versions: VersionSettings(defaults: box.defaults),
-            catalog: catalog
+            catalog: catalog,
+            // A throwaway journal folder, and a folder picker that is never opened.
+            journalImport: JournalImport(
+                root: FileManager.default.temporaryDirectory.appendingPathComponent("DearDiary-Tests-\(UUID().uuidString)", isDirectory: true),
+                record: ImportRecord(defaults: box.defaults),
+                pickFolder: { nil }
+            )
         )
         configure(parts)
 
@@ -161,7 +216,8 @@ final class SettingsSnapshotTests: XCTestCase {
             versionIndex: VersionIndex(),
             versionActions: .none,
             catalog: parts.catalog,
-            connection: FakeProvider()
+            connection: FakeProvider(),
+            journalImport: parts.journalImport
         )
         .defaultAppStorage(box.defaults)
 

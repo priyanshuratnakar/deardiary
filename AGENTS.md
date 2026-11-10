@@ -145,7 +145,7 @@ Other behaviour:
 - Background work stops at 40 requests a day (`MemoryLimits.dailyRequests`); a rebuild is not held back by this. Token counts are saved in each digest file.
 - Failures are quiet: one plain line in Settings, then another try after five minutes. A declined or cut-off reply marks that entry as failed and the rest carry on.
 - "Forget everything the AI has learned" deletes the memory folder (fixes included) and switches memory off, after a second confirming click.
-- The engine skips video entries, empty entries and freewrite's bundled welcome guide.
+- The engine skips video entries, empty entries and the welcome page (since M10: Dear Diary's own, and freewrite's guide from before).
 - Talk conversations do not feed memory; only entries do.
 
 Wiring:
@@ -289,7 +289,7 @@ Rules the code follows (keep them when changing it):
 1. **The keeper only reads entries.** Like the memory engine it looks at the journal folder itself, once a minute, off the main thread, and reads the files freewrite has already saved. It never writes an entry file and typing never waits for it.
 2. **When a version is saved.** When the entry's text differs from its newest version and five minutes have passed since that version (for an entry with no version yet, since the entry was started). So a long writing session leaves a copy every five minutes, and the state an entry was left in becomes a copy within five minutes.
 3. **Entries that already exist get one copy** on the first check after versions are switched on, so the first later edit to an old entry can be undone.
-4. **Skipped:** empty entries, video entries and freewrite's welcome guide. Text that has not changed is never copied twice.
+4. **Skipped:** empty entries, video entries and the welcome page (see M10). Text that has not changed is never copied twice.
 5. **The newest 50 versions** of each entry are kept (`VersionLimits.keep`).
 6. **The History icon shows only when there is something earlier to see:** the entry has more than one version, or one version and an edit since. With versions off the index is empty, so the sidebar is freewrite's own.
 7. **A restore can always be undone.** Before a restore, the entry as it reads now is saved as a version, whatever the time. If that fails, nothing is restored. The versions code never writes the entry itself: it hands the text to `ContentView`, which puts it on the page, and freewrite's own auto-save writes the file.
@@ -387,6 +387,49 @@ Changes in `ContentView.swift`: two of the existing "Dear Diary" hooks were loos
 A note for later: curved links and small marks drifting along the selected thought's links were built first and then taken out, because the owner's references have straight lines and nothing moving. Do not bring them back without asking.
 
 Tests: `MemoryMapTests.swift` (the layout, days, dragging to link, Find, the empty states), more in `MapTests.swift` (days in the graph), and `MapSnapshotTests.swift` redrawn. `MapFixtures.journal` in `MapTestSupport.swift` makes a memory shaped like a real journal: a dozen thoughts that keep coming back, some that return now and then, and many mentioned once. Use it, not `crowd`, to judge how the map looks.
+
+### M10: first run and moving in
+
+The third milestone of the second round. A new journal opens on Dear Diary's own welcome page, and entries written in the original freewrite app can be copied in from Settings. The entitlements and the project file were not touched.
+
+**The welcome page**
+
+- `freewrite/default.md` is now Dear Diary's welcome: what the page is, what is new (Talk, Memory, Versions, all off), where Settings is, and that old freewrite entries can be brought across. freewrite's guide moved, unchanged, to `freewrite/freewrite-welcome.md` and is still bundled.
+- `ContentView.createNewEntry()` still loads `default.md` for the first entry of an empty journal, so `ContentView` was not changed for this. A journal that already holds freewrite's guide keeps it; nothing rewrites an existing entry.
+- `JournalReader.isWelcome(_:)` is true for both pages (`bundledWelcomeText()` and `bundledEarlierWelcomeTexts()`). Memory, versions and the importer all skip a welcome page through it.
+- **If the wording of `default.md` changes again**, keep the old wording as another bundled file and add it to `bundledEarlierWelcomeTexts()`. Otherwise a journal that opened on the old wording would have it treated as the user's own writing.
+
+**Bringing entries from freewrite**
+
+Dear Diary keeps its journal in its own folder, so entries written in freewrite are not in it. The last section of Settings, "Bring entries from freewrite…", copies them in.
+
+New file `freewrite/Settings/JournalImporter.swift`:
+
+- `ImportPlan`: what was found in a folder (the entries to copy, how many are already here, how many have videos, the size).
+- `JournalImporter`: `scan` looks through a folder and `copy` copies one entry. It touches files and nothing else.
+- `ImportRecord`: which entries were copied in, and when. Kept in UserDefaults under `import.broughtIn` as entry ids and times: no names, no text.
+- `JournalImport`: what the section in Settings shows (nothing yet, found, all here already, nothing found, copying, done). `JournalImport.shared` is the app's; `didCopy` fires when entries have arrived.
+
+Rules the code follows (keep them when changing it):
+
+1. **The user picks the folder.** A macOS folder picker opens where freewrite usually keeps its journal (`~/Library/Containers/app.humansongs.freewrite/Data/Documents`). Dear Diary cannot look there by itself; the app is sandboxed and reads only the folder that was picked.
+2. **Looking changes nothing.** Only files named like entries (`[UUID]-[yyyy-MM-dd-HH-mm-ss].md`) count. If the picked folder has none but holds a folder called `Freewrite`, that one is used.
+3. **Left behind:** empty entries, welcome pages, a video entry whose video is missing, and anything already here. "Already here" means a file of the same name is in the journal; those are counted and never copied again.
+4. **Copy, never move.** The originals are not touched. Nothing in the journal is ever replaced, even if a file of the same name turns up between looking and copying.
+5. **Videos come with their entries**, the video before the entry so an entry never arrives without it. All three places freewrite has kept videos over the years are copied as found (`Videos/[entry]/`, `Videos/[entry].mov`, `[entry].mov`); `ContentView` already reads all three.
+6. **One entry at a time, off the main thread.** "Stop" finishes the entry in hand and keeps what was copied. An entry that cannot be copied is counted and the rest carry on.
+7. **Dates are kept.** File names are not changed, so History shows each entry on the day it was written, and each copy keeps the date its file was last edited.
+8. **Memory waits.** Every copied entry is noted in `ImportRecord` before its file arrives. The memory engine (`MemoryEnvironment.broughtInAt`) leaves a noted entry alone in its background checks, even one that was edited in freewrite after memory was switched on, and does not count it as waiting. "Rebuild memory" reads everything, after showing the count. A copied entry that is later edited in Dear Diary is read like any other entry.
+9. **Versions follow their own rules.** With versions on, the keeper saves one copy of each copied entry at its next check, as it does for any entry that has none.
+10. **Nothing is logged:** no file names, no text.
+
+One new hook in `ContentView.swift` (marked with a "Dear Diary" comment, approved by the owner): `.onReceive(JournalImport.shared.didCopy)`. It saves the open entry, calls freewrite's own `loadExistingEntries()` so History shows the copied entries at once, and goes back to the entry that was open. `loadExistingEntries()` applies freewrite's launch rules, so, as on a relaunch, it may add an empty entry for today if there is none.
+
+`MemoryEngine.swift` gains the one rule in point 8. `SettingsView` gains `movingInSection` and takes a `journalImport` for tests.
+
+Messages are in `docs/messages.md` under "Bringing entries from freewrite".
+
+Tests: `JournalImportTests.swift` (the welcome pages, looking and copying with made-up folders, the section's states and wording, and copied entries with memory) and four more pictures in `SettingsSnapshotTests.swift`. `MemorySandbox.broughtInAt` lets a memory test say which entries were copied in. Never point a test or a development run at the owner's real freewrite folder. The real folder picker, and reading freewrite's container through it, have not been tried.
 
 ## Product Vision & User Experience
 

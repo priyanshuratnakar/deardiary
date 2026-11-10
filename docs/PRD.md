@@ -192,12 +192,14 @@ What changes:
 - **Settings says what is missing** in one plain line, and old results do not linger.
 - **Memory can be found.** The word "Memory" is always in the bottom bar. This is the one exception to principle 1: with AI off it shows whatever is already in memory, or one line on how to set memory up. Nothing is sent until AI is on.
 - **Memory looks like a second brain.** The graph shows every day you wrote as a small grey dot, joined by thin straight lines to the thoughts it touched. Thoughts are the coloured dots, bigger the more days touch them. The thoughts that keep coming back end up as hubs with their days fanned around them.
+- **A first run says what is here.** A new journal opens on a short Dear Diary welcome in place of freewrite's guide: what the page is, the three new things and that they are off, and where Settings is. A journal that already holds freewrite's guide keeps it.
+- **Moving in from freewrite.** Settings can copy entries across from the original freewrite app, videos included. It copies and never moves, leaves the originals alone, and skips empty entries, freewrite's guide and anything already here. Copied entries are not read by the AI until you choose "Rebuild memory", which shows the count first.
 
 | # | Milestone | Done when |
 | --- | --- | --- |
 | M8 | Settings and any AI | You can choose a service, pick its models from a list, and see what is missing. Talk and memory work through whichever service is chosen. With AI off, the app still makes no network calls. |
 | M9 | Memory you can see | "Memory" is always in the bottom bar. The graph shows thoughts and days. Clicking a day shows what it touched and opens the entry. One thought can be dragged onto another to link them, and a thought can be found by name. |
-| M10 | First run and moving in | A first run points to setting up AI. Entries from the original freewrite app can be brought across. |
+| M10 | First run and moving in | A first run points to setting up AI. Entries from the original freewrite app can be brought across, and they show in History at once. |
 
 ## Open questions
 

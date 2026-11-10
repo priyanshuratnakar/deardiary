@@ -76,6 +76,8 @@ struct MemoryEnvironment {
     var provider: () -> LLMProvider
     /// Which service is in use, so a problem can be reported in its name.
     var service: () -> AIProviderKind = { .claude }
+    /// When an entry was copied in from freewrite, or nil if it was written here.
+    var broughtInAt: (UUID) -> Date? = { _ in nil }
     var now: () -> Date
     var defaults: UserDefaults
     var limits = MemoryLimits()
@@ -90,6 +92,7 @@ struct MemoryEnvironment {
             journal: JournalReader(),
             provider: { AIRouter.shared },
             service: { settings.savedProvider() },
+            broughtInAt: { ImportRecord.shared.date(for: $0) },
             now: { Date() },
             defaults: .standard
         )
@@ -442,6 +445,10 @@ actor MemoryEngine {
             }
             // Entries last edited before memory was switched on wait for a rebuild.
             if let since, known == nil, file.modifiedAt < since {
+                continue
+            }
+            // So do entries copied in from freewrite, until they are edited here.
+            if !everything, known == nil, let broughtIn = env.broughtInAt(file.id), file.modifiedAt < broughtIn {
                 continue
             }
 

@@ -2,7 +2,7 @@
 
 This is the copy the fork added: error lines, empty states and confirmations. Each one is a single plain line, says what happened, and says what to do next when there is something to do. Edit the wording in the file named beside each group, then update this list.
 
-freewrite's own wording (the bottom bar, the welcome guide, the video recorder) is not listed here and was not changed.
+freewrite's own wording (the bottom bar, the video recorder) is not listed here and was not changed. The welcome page a new journal opens on is Dear Diary's own since M10; its text is the file `freewrite/default.md`. freewrite's guide is kept, unchanged, as `freewrite/freewrite-welcome.md`.
 
 ## When the AI cannot answer
 
@@ -120,3 +120,22 @@ What each service is, under "Runs on":
 | OpenAI | OpenAI, through your own API key. Entry text is sent to OpenAI when you talk or build memory. A ChatGPT plan does not include this. |
 | Claude | Claude, through your own API key from Anthropic. Entry text is sent to Anthropic when you talk or build memory. |
 | Other | Any service that speaks the OpenAI chat format, at an address you give. Entry text is sent to that address when you talk or build memory. |
+
+## Bringing entries from freewrite
+
+File: `freewrite/Settings/JournalImporter.swift` (the lines) and `freewrite/Settings/SettingsView.swift` (the section).
+
+| When | Message |
+| --- | --- |
+| Always, under the word | If you used freewrite before, pick its folder and your entries are copied into Dear Diary. The originals are left where they are. |
+| In the folder picker | Choose the folder freewrite keeps your entries in. It is usually called Freewrite. |
+| Entries were found | Found 42 entries and 3 videos (310 MB). 2 are already here. |
+| The words under it | Copy 40 entries · Cancel |
+| Every entry found is here already | Found 2 entries. All of them are already here. (For one: Found 1 entry. It is already here.) |
+| The folder holds no entries | No freewrite entries in that folder. The folder is usually called Freewrite. |
+| While copying | Copying 12 of 40… (with the word Stop) |
+| Copied | Copied 40 entries. They are in History now. (For one: Copied 1 entry. It is in History now.) |
+| Stopped part-way | Copied 12 of 40 entries. They are in History now. |
+| Some could not be copied | Copied 38 of 40 entries. They are in History now. 2 could not be copied. |
+| None could be copied | Couldn't copy the entries. Nothing was changed. |
+| Under "Copied" | The AI has not read them. To include them in memory, use Rebuild memory above; it shows the count first. |

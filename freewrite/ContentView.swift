@@ -1795,6 +1795,19 @@ struct ContentView: View {
             showingSidebar = false  // Hide sidebar by default
             loadExistingEntries()
         }
+        .onReceive(JournalImport.shared.didCopy) { _ in
+            // Dear Diary: entries copied in from freewrite show in History at once. What is
+            // open is saved, the folder is read again as at launch, and the page goes back to it.
+            let openEntryId = selectedEntryId
+            if let openEntryId, let openEntry = entries.first(where: { $0.id == openEntryId }), openEntry.entryType == .text {
+                saveEntry(entry: openEntry)
+            }
+            loadExistingEntries()
+            if let openEntryId, selectedEntryId != openEntryId, let openEntry = entries.first(where: { $0.id == openEntryId }) {
+                selectedEntryId = openEntry.id
+                loadEntry(entry: openEntry)
+            }
+        }
         .onChange(of: showingVideoRecording) { _, isShowing in
             if !isShowing {
                 clearVideoRecordingPreparationState()

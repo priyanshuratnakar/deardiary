@@ -21,6 +21,8 @@ final class MemorySandbox: @unchecked Sendable {
     var enabled = true
     var enabledSince: Date? = nil
     var model = "model-for-memory"
+    /// When an entry was copied in from freewrite, for the tests about moving in.
+    var broughtInAt: (UUID) -> Date? = { _ in nil }
 
     private let suiteName = "deardiary.tests.\(UUID().uuidString)"
     let defaults: UserDefaults
@@ -54,6 +56,7 @@ final class MemorySandbox: @unchecked Sendable {
             store: store,
             journal: journal,
             provider: { provider },
+            broughtInAt: { [unowned self] in self.broughtInAt($0) },
             now: { [unowned self] in self.clock },
             defaults: defaults,
             limits: limits
