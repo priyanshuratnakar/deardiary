@@ -51,4 +51,26 @@ final class MemorySampleTests: XCTestCase {
             "thoughts/trouble-sleeping.md",
         ])
     }
+
+    /// Attaches the full instructions talk would be sent for a new entry that
+    /// mentions Meera, with the made-up week in memory. Useful for reading
+    /// exactly what leaves the Mac with a talk message.
+    func testWhatTalkIsSentFromMemoryForANewEntry() throws {
+        let built = try MemoryWeek.built()
+        let entry = TalkEntry(
+            id: UUID(uuidString: "99999999-0000-0000-0000-000000000000")!,
+            text: "Meera wants an answer today and I still don't have one.",
+            date: MemoryWeek.day(10)
+        )
+        let context = ContextBuilder.build(entry: entry, recentMessages: [], memory: built.memory, digests: built.digests)
+        let system = Prompts.talkSystem(entryText: entry.text, entryDate: entry.date, memory: context)
+
+        XCTAssertTrue(system.contains("<memory>"))
+        XCTAssertTrue(system.contains("<entry>"))
+
+        let attachment = XCTAttachment(string: system)
+        attachment.name = "talk-instructions-with-memory"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
 }

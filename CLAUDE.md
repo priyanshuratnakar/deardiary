@@ -72,7 +72,7 @@ Rules the code follows (keep them when changing it):
 
 - **When Talk shows.** Only when AI is on and a key is saved (`TalkController.isAvailable`) and a text entry is open. Otherwise freewrite's "Chat" button is shown, unchanged. Video entries always keep "Chat".
 - **When talk speaks first.** Once, at the moment it is switched on, and only if the page has writing and that entry has no saved conversation. Showing a different entry while talk is on never sends anything by itself.
-- **What is sent.** Each request is `Prompts.talkSystem` (the voice plus the entry as it reads at that moment, between `<entry>` markers) and the conversation so far. In M2 talk knows only the open entry; memory of other days comes in M4.
+- **What is sent.** Each request is `Prompts.talkSystem` (the voice plus the entry as it reads at that moment, between `<entry>` markers) and the conversation so far. Since M4, notes from memory are added when memory is on (see below).
 - **Off means off.** Switching talk off, switching AI off in Settings, or removing the key cancels any reply in progress and drops the partial text. A cancelled request that has not started yet is never sent.
 - **Storage.** One file per entry at `conversations/[ENTRY-UUID].md` inside the journal folder: a `# Talk` title, then `## You · yyyy-MM-dd HH:mm:ss` and `## Dear Diary · …` headings, each followed by the text. It is plain markdown and can be edited or deleted by hand. Deleting an entry deletes its conversation.
 - **Declined replies.** Talk requests set `retryIfDeclined`, which makes `AnthropicProvider` send `fallbacks: "default"` with the header `anthropic-beta: server-side-fallback-2026-07-01`; Anthropic then retries a declined request on a model it chooses. If a model rejects that option (HTTP 400), the provider asks again without it and remembers for the rest of the run. If the reply is still declined, the column shows `Prompts.talkDeclinedNotice`, which repeats the PRD's support options.
@@ -157,6 +157,20 @@ Wiring:
 - `AISettings` has the memory switch (`ai.memoryEnabled`) and when it was last switched on (`ai.memoryEnabledAt`).
 
 Agents: never run the engine against the owner's real journal. Tests use `MemorySandbox` (a throwaway folder and a clock the test controls) and `MemoryWeek` (a made-up week of entries with scripted replies) from `freewriteTests/MemoryTestSupport.swift`. `MemorySampleTests` builds a whole memory folder from that week and attaches the files to the test results, which is the easiest way to see the format.
+
+### M4: memory in talk
+
+When memory is on, talk is given the relevant notes from memory with each message, and is told to name the day when it draws on the past. Nothing on screen changed and `ContentView.swift` was not touched.
+
+- `freewrite/Memory/ContextBuilder.swift` picks what is sent, on the Mac, with no AI call. It always sends the profile. It sends the thoughts whose label or other names appear (as whole words, ignoring a leading "the", "a", "an" or "my") in the open entry or in the last few things said in the column, the thoughts the open entry's digest already touched, and the thoughts linked to those, one step away. Each comes with its description, its most recent quoted lines and timeline notes with their days, and its links to other thoughts being sent. The summaries of the entries behind those lines are added.
+- **Only the past is sent.** Lines that came from the open entry are left out, because talk already has the entry itself. A thought known only from the open entry is not sent.
+- **Limits** (`ContextBuilder.Limits`): six named thoughts, six neighbours, three quotes and two timeline notes each, six day summaries, and about 9,000 characters in all. When over the size limit, neighbours are dropped first, then day summaries, and named thoughts last.
+- `Prompts.swift`: the talk instructions are now built from parts. `talkManner` and `talkSafety` are always sent. Between them goes `talkKnowsTheEntryOnly` (memory off or empty; this is exactly what M2 sent) or `talkKnowsMemory` (use the notes only when they help, state nothing about the past that is not in them, name the day, never recite the profile). `talkMemoryNotes` lays the notes out between `<memory>` markers, with days written in full ("Monday 2 November 2026").
+- `TalkController` reads the memory folder off the main thread before each reply, and only when `AISettings.memoryAllowed()` is true (AI on, memory on, a key saved). With memory off, nothing from the memory folder is read or sent by talk.
+- Talk does not wait for the open entry to be digested; it uses memory as it stands.
+- The rule against stating things that are not in the notes is an instruction to the model, not something the app can check.
+
+`MemorySampleTests.testWhatTalkIsSentFromMemoryForANewEntry` attaches the full instructions talk would be sent for a sample entry, which is the easiest way to read exactly what leaves the Mac with a talk message.
 
 ## Product Vision & User Experience
 

@@ -20,9 +20,10 @@ enum Prompts {
 
     // MARK: - Talk mode
 
-    /// The voice and the limits of talk mode. This follows the "Privacy and care"
-    /// section of docs/PRD.md. Edit the wording here; the entry is added below it.
-    static let talkVoice = """
+    /// The voice of talk mode. This follows the "Privacy and care" section of
+    /// docs/PRD.md. The instructions sent are this, then what talk knows
+    /// (with or without memory), then the safety behaviour, then the entry.
+    static let talkManner = """
     You are the talk mode of Dear Diary, a private journal. The person writing has turned you on because they want to be heard. You are reading their entry alongside them.
 
     How to respond
@@ -39,11 +40,26 @@ enum Prompts {
 
     Being honest about what you are
     - You sound like a good therapist, but you are not one. If they ask, say plainly that you are an AI inside their journal, not a therapist, and that you cannot replace one.
+    """
 
+    /// What talk knows when memory is off or empty: only the open entry.
+    static let talkKnowsTheEntryOnly = """
     What you know
     - You know only what is in the entry below and in this conversation. You cannot see their other entries.
     - Never state anything about their past, their history or their patterns unless it is written in the entry or they have just told you. If they mention something you cannot see, say so and ask.
+    """
 
+    /// What talk knows when memory is on: the open entry, plus notes from earlier entries.
+    static let talkKnowsMemory = """
+    What you know
+    - You can see the entry below and this conversation. You also have notes from their earlier entries: a short profile, and some thoughts, each with dated lines quoted from what they wrote.
+    - Use the notes only when they help with what they are saying now. Most replies need none of them. Never recite the profile or list what you know about them.
+    - State nothing about their past that is not in the notes or the entry. If you are not sure, ask rather than assume. If they mention something that is not there, say you cannot see it.
+    - When you do bring up something from before, name the day it was written, exactly as the notes give it, so they can check it. For example: "On Monday 2 November you wrote that you felt sick about saying yes."
+    - The notes can be wrong or out of date. Offer what you noticed as something to look at together, not as a verdict.
+    """
+
+    static let talkSafety = """
     If they may be in danger
     - If the entry or a message is about wanting to die, about harming themselves, or about being in danger, drop the reflective style completely.
     - Ask directly and simply whether they are safe right now.
@@ -51,31 +67,105 @@ enum Prompts {
     - Stay brief and stay with them. Do not return to reflective questions until they have told you they are safe.
     """
 
-    /// The full instructions for one talk reply: the voice, then the entry as it reads right now.
-    static func talkSystem(entryText: String, entryDate: Date?) -> String {
-        let entry = entryText.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// The voice and the limits of talk mode when it has no memory to draw on.
+    static var talkVoice: String {
+        [talkManner, talkKnowsTheEntryOnly, talkSafety].joined(separator: "\n\n")
+    }
 
-        var dateLine = ""
-        if let entryDate {
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.dateFormat = "EEEE d MMMM yyyy"
-            dateLine = " It was started on \(formatter.string(from: entryDate))."
+    /// The voice and the limits of talk mode when notes from memory are sent along.
+    static var talkVoiceWithMemory: String {
+        [talkManner, talkKnowsMemory, talkSafety].joined(separator: "\n\n")
+    }
+
+    /// The full instructions for one talk reply: the voice, the notes from memory
+    /// if there are any, then the entry as it reads right now.
+    static func talkSystem(entryText: String, entryDate: Date?, memory: TalkMemoryContext? = nil) -> String {
+        let entry = entryText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let notes = memory.flatMap { $0.isEmpty ? nil : talkMemoryNotes($0) }
+
+        var parts: [String] = [notes == nil ? talkVoice : talkVoiceWithMemory]
+        if let notes {
+            parts.append(notes)
         }
 
         if entry.isEmpty {
-            return talkVoice + "\n\nThe page is empty right now. They have not written anything in this entry yet."
+            parts.append("The page is empty right now. They have not written anything in this entry yet.")
+        } else {
+            var dateLine = ""
+            if let entryDate {
+                dateLine = " It was started on \(longDay(entryDate))."
+            }
+            parts.append("""
+            This is the entry.\(dateLine) They may keep writing while you talk, so this is how it reads at this moment:
+
+            <entry>
+            \(entry)
+            </entry>
+            """)
+        }
+        return parts.joined(separator: "\n\n")
+    }
+
+    /// The notes from memory, laid out for the model: the profile, then each
+    /// thought with its dated quotes, how it has shifted, and what it is linked to.
+    static func talkMemoryNotes(_ memory: TalkMemoryContext) -> String {
+        var lines: [String] = ["These are the notes from their earlier entries.", "", "<memory>"]
+
+        if !memory.profile.isEmpty {
+            lines.append("Profile:")
+            lines.append(memory.profile)
+            lines.append("")
         }
 
-        return talkVoice + """
+        if !memory.thoughts.isEmpty {
+            lines.append("Thoughts that may bear on what they are saying:")
+            lines.append("")
+            for thought in memory.thoughts {
+                let summary = thought.summary.isEmpty ? "" : " \(thought.summary)"
+                lines.append("\(thought.label) (\(thought.kind.rawValue)).\(summary)")
+                for quote in thought.quotes {
+                    lines.append("- \(longDay(quote.date)), they wrote: \"\(MemoryText.singleLine(quote.text))\"")
+                }
+                for shift in thought.shifts {
+                    lines.append("- How it shifted, \(longDay(shift.date)): \(shift.note)")
+                }
+                for connection in thought.connections {
+                    lines.append("- Linked to \(connection.label) (\(connection.reason)), \(longDay(connection.date)): \"\(MemoryText.singleLine(connection.quote))\"")
+                }
+                lines.append("")
+            }
+        }
 
+        if !memory.days.isEmpty {
+            lines.append("What those entries were about:")
+            for day in memory.days {
+                lines.append("- \(longDay(day.date)): \(day.summary)")
+            }
+            lines.append("")
+        }
 
-        This is the entry.\(dateLine) They may keep writing while you talk, so this is how it reads at this moment:
+        if lines.last == "" {
+            lines.removeLast()
+        }
+        lines.append("</memory>")
+        return lines.joined(separator: "\n")
+    }
 
-        <entry>
-        \(entry)
-        </entry>
-        """
+    /// A day written out in full, such as "Monday 2 November 2026".
+    static func longDay(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "EEEE d MMMM yyyy"
+        return formatter.string(from: date)
+    }
+
+    /// The same, from a day stored as yyyy-MM-dd. Falls back to the stored text.
+    static func longDay(_ day: String) -> String {
+        let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.dateFormat = "yyyy-MM-dd"
+        guard let date = parser.date(from: day) else { return day }
+        return longDay(date)
     }
 
     /// Sent on the user's behalf, and never shown, when talk is switched on with
@@ -140,10 +230,6 @@ enum Prompts {
 
     /// The material for one digest: the profile, the index of thoughts, and the entry.
     static func digestMessage(profile: String, thoughts: [Thought], entryDate: Date, entryText: String) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "EEEE d MMMM yyyy"
-
         let profileText = profile.trimmingCharacters(in: .whitespacesAndNewlines)
         let index = thoughts
             .sorted { $0.id < $1.id }
@@ -157,7 +243,7 @@ enum Prompts {
         Thoughts already in memory (id | label | kind | other names | what it is):
         \(index.isEmpty ? "(none yet)" : index)
 
-        Entry started on \(formatter.string(from: entryDate)):
+        Entry started on \(longDay(entryDate)):
         <entry>
         \(entryText.trimmingCharacters(in: .whitespacesAndNewlines))
         </entry>

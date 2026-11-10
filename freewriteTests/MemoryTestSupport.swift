@@ -264,4 +264,30 @@ enum MemoryWeek {
     static func digested(_ entry: Entry) -> DigestedEntry {
         DigestedEntry(id: entry.id, date: MemoryText.day(entry.startedAt), text: entry.text)
     }
+
+    /// Memory as it stands after the whole week has been digested, with the digest kept for each entry.
+    static func built() throws -> (memory: MemorySnapshot, digests: [EntryDigest]) {
+        var memory = MemorySnapshot()
+        var digests: [EntryDigest] = []
+        for (entry, reply) in zip(entries, replies) {
+            let result = try DigestParser.parse(reply)
+            let outcome = MemoryApplier.apply(result, for: digested(entry), to: &memory, pins: Pins())
+            digests.append(EntryDigest(
+                entryID: entry.id,
+                entryDate: MemoryText.day(entry.startedAt),
+                textHash: MemoryEngine.fingerprint(entry.text),
+                digestedAt: day(9, hour: 21),
+                model: "model-for-memory",
+                summary: result.summary,
+                thoughts: outcome.touched,
+                openLoops: result.openLoops,
+                rejected: outcome.rejected,
+                inputTokens: nil,
+                outputTokens: nil,
+                failed: false,
+                failureReason: nil
+            ))
+        }
+        return (memory, digests)
+    }
 }

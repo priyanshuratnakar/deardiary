@@ -66,6 +66,7 @@ final class TalkController: ObservableObject {
 
     private let settings: AISettings
     private let store: ConversationStore
+    private let memoryStore: MemoryStore
     private let makeProvider: () -> LLMProvider
     private let now: () -> Date
     private let talkSwitchedOn: () -> Void
@@ -80,12 +81,14 @@ final class TalkController: ObservableObject {
     init(
         settings: AISettings = .shared,
         store: ConversationStore = ConversationStore(),
+        memoryStore: MemoryStore = MemoryStore(),
         now: @escaping () -> Date = { Date() },
         provider: @escaping () -> LLMProvider = { AnthropicProvider.shared },
         talkSwitchedOn: @escaping () -> Void = { MemoryEngine.shared.nudge(includeFresh: true) }
     ) {
         self.settings = settings
         self.store = store
+        self.memoryStore = memoryStore
         self.now = now
         self.makeProvider = provider
         self.talkSwitchedOn = talkSwitchedOn
@@ -199,19 +202,28 @@ final class TalkController: ObservableObject {
         transcript.replyInProgress = nil
         transcript.isWaiting = true
 
-        let request = LLMRequest(
-            model: settings.resolvedTalkModel,
-            system: Prompts.talkSystem(entryText: entry.text, entryDate: entry.date),
-            messages: Self.history(from: transcript.messages),
-            maxTokens: AILimits.talkMaxTokens,
-            retryIfDeclined: true
-        )
+        let model = settings.resolvedTalkModel
+        let history = Self.history(from: transcript.messages)
+        let recentMessages = transcript.messages.filter { $0.speaker == .you }.suffix(4).map(\.text)
         let entryID = entry.id
         let provider = makeProvider()
 
         replyTask = Task { [weak self] in
             // If talk was switched off before this even started, send nothing at all.
             guard !Task.isCancelled else { return }
+
+            // Pick the notes from memory that bear on this, if memory is on.
+            let memory = await self?.memoryContext(for: entry, recentMessages: recentMessages)
+            guard self != nil, !Task.isCancelled else { return }
+
+            let request = LLMRequest(
+                model: model,
+                system: Prompts.talkSystem(entryText: entry.text, entryDate: entry.date, memory: memory),
+                messages: history,
+                maxTokens: AILimits.talkMaxTokens,
+                retryIfDeclined: true
+            )
+
             var reply = ""
             do {
                 for try await piece in provider.stream(request) {
@@ -229,6 +241,22 @@ final class TalkController: ObservableObject {
                 self.failReply(error)
             }
         }
+    }
+
+    /// The notes from memory to send with a reply, or nil when memory is off or empty.
+    /// The files are read off the main thread, so typing is never held up.
+    private func memoryContext(for entry: TalkEntry, recentMessages: [String]) async -> TalkMemoryContext? {
+        guard settings.memoryAllowed() else { return nil }
+        let store = memoryStore
+        let context = await Task.detached(priority: .userInitiated) {
+            ContextBuilder.build(
+                entry: entry,
+                recentMessages: recentMessages,
+                memory: store.loadSnapshot(),
+                digests: store.loadAllDigests()
+            )
+        }.value
+        return context.isEmpty ? nil : context
     }
 
     private func finishReply(_ reply: String, entryID: UUID) {

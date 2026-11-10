@@ -84,6 +84,7 @@ final class TalkSandbox {
     let root: URL
     let settings: AISettings
     let store: ConversationStore
+    let memoryStore: MemoryStore
 
     private let suiteName = "deardiary.tests.\(UUID().uuidString)"
     private let defaults: UserDefaults
@@ -100,6 +101,7 @@ final class TalkSandbox {
         keychain = Keychain(service: "com.priyanshuratnakar.deardiary.tests.\(UUID().uuidString)", account: "test")
         settings = AISettings(defaults: defaults, keychain: keychain)
         store = ConversationStore(root: root)
+        memoryStore = MemoryStore(root: root)
 
         settings.aiEnabled = aiOn
         if hasKey {
@@ -112,10 +114,20 @@ final class TalkSandbox {
         TalkController(
             settings: settings,
             store: store,
+            memoryStore: memoryStore,
             now: { [unowned self] in self.tick() },
             provider: { provider },
             talkSwitchedOn: {}
         )
+    }
+
+    /// Fills the sandbox's memory folder with the made-up week, already digested.
+    func writeMadeUpMemory() throws {
+        let built = try MemoryWeek.built()
+        try memoryStore.write(built.memory, replacing: MemorySnapshot())
+        for digest in built.digests {
+            try memoryStore.saveDigest(digest)
+        }
     }
 
     func tick() -> Date {
