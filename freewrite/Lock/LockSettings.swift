@@ -3,7 +3,11 @@
 //  Dear Diary
 //
 //  Whether Dear Diary locks, and how long it may sit in the background before
-//  it does. Off until the user turns it on in Settings.
+//  it does.
+//
+//  The lock is on from the first launch, until the user turns it off in
+//  Settings. This is the one feature that starts on: the owner asked for a
+//  diary that is private without anyone having to set that up.
 //
 
 import Foundation
@@ -17,7 +21,10 @@ final class LockSettings: ObservableObject {
         guard StorageRoot.isRunningTests() else {
             return LockSettings()
         }
-        return LockSettings(defaults: UserDefaults(suiteName: "deardiary.tests.host.lock.\(UUID().uuidString)") ?? .standard)
+        return LockSettings(
+            defaults: UserDefaults(suiteName: "deardiary.tests.host.lock.\(UUID().uuidString)") ?? .standard,
+            onUnlessChosen: false
+        )
     }()
 
     /// The choices for how long Dear Diary may sit in the background before it locks.
@@ -40,9 +47,10 @@ final class LockSettings: ObservableObject {
         didSet { defaults.set(afterMinutes, forKey: Key.afterMinutes) }
     }
 
-    init(defaults: UserDefaults = .standard) {
+    /// - Parameter onUnlessChosen: what the lock is when the user has never touched the switch.
+    init(defaults: UserDefaults = .standard, onUnlessChosen: Bool = true) {
         self.defaults = defaults
-        self.enabled = defaults.bool(forKey: Key.enabled)
+        self.enabled = defaults.object(forKey: Key.enabled) == nil ? onUnlessChosen : defaults.bool(forKey: Key.enabled)
         let saved = defaults.integer(forKey: Key.afterMinutes)
         self.afterMinutes = Self.delays.contains(saved) ? saved : Self.defaultDelay
     }

@@ -55,6 +55,8 @@ Agents: never run or test against the owner's real journal. Launch development b
 xcodebuild test -project freewrite.xcodeproj -scheme freewrite -only-testing:freewriteTests
 ```
 
+(Since the app was installed in Applications, use `./scripts/test.sh` instead of this command; see "Installing the app on this Mac".)
+
 The unit tests start the app itself, which is why the storage root switches to a temporary folder under test. They never use the real network (`StubURLProtocol` in `freewriteTests/TestSupport.swift` answers every request), the real API key (a throwaway Keychain service) or the real preferences (a throwaway UserDefaults suite). `SettingsSnapshotTests` draws the Settings window off screen and attaches a picture to the test results. The UI test target is freewrite's and is not part of this command.
 
 ### M2: talk mode
@@ -480,13 +482,17 @@ Not tried by hand: the names on hover, the buttons coming back when the pointer 
 
 ### M12: the lock
 
-The owner asked for this after M11. Dear Diary can open locked and ask macOS to check who is at the Mac: Touch ID where the Mac has it, the Mac's own password otherwise. It is off by default, like Talk, Memory and Versions. `ContentView.swift`, the entitlements and the project file were not touched.
+The owner asked for this after M11. Dear Diary opens locked and asks macOS to check who is at the Mac: Touch ID where the Mac has it, the Mac's own password otherwise. `ContentView.swift`, the entitlements and the project file were not touched.
+
+**The lock is on from the first launch.** It is the one feature that starts on. It was first built off by default, like Talk, Memory and Versions; the owner opened the app twice expecting a password screen and reported it as broken, so the default follows what was asked for: a diary that is private without anyone setting that up. It can be turned off in Settings, which asks first. A Mac that cannot check its owner (it has no password) does not open locked.
+
+**When you start a development build yourself, add `-lock.enabled NO`** after the program's path, or the Touch ID sheet appears on the owner's screen. Under test the lock is off by itself.
 
 **What the lock is and is not.** It covers Dear Diary's windows. It does not encrypt anything: entries stay plain files in the journal folder, as the PRD's third principle asks, protected by the Mac's own login. Settings says so in one line. Never describe the lock as protecting the files.
 
 New files, all in `freewrite/Lock/`:
 
-- `LockSettings.swift`: the switch (`lock.enabled`) and how long Dear Diary may sit in the background before it locks (`lock.afterMinutes`: 1, 5, 15 or 30, default 5), in UserDefaults. Under test, `LockSettings.shared` is a throwaway copy and off, so the app under test never opens locked.
+- `LockSettings.swift`: the switch (`lock.enabled`, on unless the user has turned it off) and how long Dear Diary may sit in the background before it locks (`lock.afterMinutes`: 1, 5, 15 or 30, default 5), in UserDefaults. Under test, `LockSettings.shared` is a throwaway copy and off, so the app under test never opens locked.
 - `Authenticator.swift`: the `Authenticator` protocol, its four answers (`allowed`, `cancelled`, `failed`, `unavailable`) and `DeviceOwnerAuthenticator`, which asks macOS through LocalAuthentication (`.deviceOwnerAuthentication`). Dear Diary never sees a fingerprint or a password; macOS draws the sheet and answers yes or no. This needs no entitlement.
 - `AppLock.swift`: the lock itself (`AppLock.shared`): `isLocked`, `isAsking` and `problem`.
 - `LockScreen.swift`: `LockScreen` (what a locked window shows) and `LockGate` (the modifier that puts it over a window).
@@ -507,7 +513,7 @@ Rules the code follows (keep them when changing it):
 
 **Settings scrolls when it has to.** With everything switched on, Settings is about 840 points tall, which with its title bar is more than a 14 inch MacBook has room for, and a Settings window cannot be resized. `SettingsView` now shows its sections whole when they fit and inside a scroll view when they do not (`ViewThatFits`), up to `tallestAllowed`, which the app takes from the screen (`tallestThatFits(screenHeight:)`). Picture tests pass their own limit so pictures are drawn whole. Keep this in mind when adding a section.
 
-Tests: `LockTests.swift` (the settings, and the lock with a clock the test controls) and `LockSnapshotTests.swift` (the locked window in both modes, and over the real writing window to show nothing of the page is left in view). `FakeAuthenticator` and `LockBox` in `LockTestSupport.swift` play macOS's check from a script; no test ever asks for Touch ID or a password. Checked once on the owner's Mac, from inside the app and without showing anything: macOS can check the owner and Touch ID is ready. Never tried: the real sheet, and the lock closing on a real sleep, screen lock or time in the background.
+Tests: `LockTests.swift` (the settings, and the lock with a clock the test controls) and `LockSnapshotTests.swift` (the locked window in both modes, and over the real writing window to show nothing of the page is left in view). `FakeAuthenticator` and `LockBox` in `LockTestSupport.swift` play macOS's check from a script; no test ever asks for Touch ID or a password. Seen to work on the owner's Mac on 11 Nov 2026: the installed app opened locked, macOS showed its sheet, and macOS's own log recorded the check passing. Never tried: the lock closing on a real sleep, screen lock or time in the background.
 
 If the lock ever cannot be opened, the app can be started unlocked from Terminal by adding `-lock.enabled NO` after the path to its program inside the app bundle. That overrides the saved switch for that one run.
 
@@ -515,7 +521,9 @@ Not built: a menu item or shortcut to lock, and any encryption of the files.
 
 ### Installing the app on this Mac
 
-The owner opens Dear Diary from Applications, not from Xcode. `scripts/install.sh` builds the Release configuration into `build/install` (which git ignores), closes Dear Diary if it is open, replaces `/Applications/Dear Diary.app` and opens it. Run it after a change the owner should have in the app they use; a change that is only committed is not in that app yet. The installed app uses the same journal and settings as any other copy, because the bundle ID is the same.
+The owner opens Dear Diary from Applications, not from Xcode. `scripts/install.sh` builds the Release configuration, closes Dear Diary if it is open, replaces `/Applications/Dear Diary.app` and opens it. Run it after a change the owner should have in the app they use; a change that is only committed is not in that app yet. The installed app uses the same journal and settings as any other copy, because the bundle ID is the same.
+
+**One copy on the Mac.** Every build makes another `Dear Diary.app`, and macOS lists each one in Spotlight and the Apps view; the owner found three and asked for one. So both scripts build inside `build/` in folders ending in `.noindex` (git ignores `build/`, Spotlight ignores `.noindex`), and both remove the app they built and tell macOS to forget it. **Run the tests with `./scripts/test.sh`** (optionally with one suite's name), not with a bare `xcodebuild test`, which builds into Xcode's usual folder and leaves a second copy behind. If you do build some other way, remove the built `Dear Diary.app` afterwards.
 
 The build is signed with the owner's Apple Development identity and is not notarised, so it runs on this Mac and is not ready to hand to other people.
 

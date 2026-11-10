@@ -201,7 +201,9 @@ What changes:
 | M9 | Memory you can see | "Memory" is always in the bottom bar. The graph shows thoughts and days. Clicking a day shows what it touched and opens the entry. One thought can be dragged onto another to link them, and a thought can be found by name. |
 | M10 | First run and moving in | A first run points to setting up AI. Entries from the original freewrite app can be brought across, and they show in History at once. |
 | M11 | The page's own look | History opens on the left. The bar is small marks in place of words, with one font mark that steps through the fonts. An empty page opens on a playful line. The window shows its red, yellow and green buttons. |
-| M12 | The lock | With the lock on, Dear Diary opens locked and asks for Touch ID or the Mac password. It locks again when the Mac sleeps, after a chosen time in the background, and on "Lock now". Turning it off asks first. |
+| M12 | The lock | Dear Diary opens locked, from the first launch, and asks for Touch ID or the Mac password. It locks again when the Mac sleeps, after a chosen time in the background, and on "Lock now". It can be turned off in Settings, which asks first. |
+
+**The lock is the one thing that starts on (M12).** Talk, Memory and Versions are off until you want them. The lock is on from the first launch, because a diary should be private without anyone having to set that up.
 
 **The lock and principle 3 (M12).** The lock covers Dear Diary's windows. It does not encrypt the journal: entries stay plain files you can open anywhere, protected by your Mac's own login. Encrypting them was considered and left out, because it would end "local and readable".
 

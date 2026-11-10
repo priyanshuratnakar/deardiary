@@ -13,12 +13,27 @@ import Testing
 
 @Suite @MainActor struct LockSettingsTests {
 
-    @Test func theLockIsOffUntilItIsSwitchedOn() {
+    @Test func theLockIsOnFromTheFirstLaunch() {
+        let untouched = UserDefaults(suiteName: "deardiary.tests.lock.\(UUID().uuidString)")!
+
+        let settings = LockSettings(defaults: untouched)
+
+        #expect(settings.enabled)
+        #expect(settings.afterMinutes == 5)
+        #expect(settings.delayInWords == "5 minutes")
+    }
+
+    @Test func onceTurnedOffItStaysOff() {
         let box = LockBox(on: false)
 
         #expect(LockSettings(defaults: box.defaults).enabled == false)
-        #expect(box.settings.afterMinutes == 5)
-        #expect(box.settings.delayInWords == "5 minutes")
+    }
+
+    @Test func aMacThatCannotCheckItsOwnerDoesNotOpenLocked() {
+        let box = LockBox()
+        box.check.available = false
+
+        #expect(!box.lock().isLocked)
     }
 
     @Test func theChoicesAreSavedAndReadBack() {

@@ -4,6 +4,9 @@
 //
 //  The lock: when it closes, when it opens, and what Settings may change.
 //
+//  The lock is on from the first launch (see LockSettings.swift), until it is
+//  turned off in Settings.
+//
 //  With the lock on, Dear Diary opens locked. It locks again when the Mac
 //  sleeps, when its screen locks or sleeps, when another user takes over the
 //  Mac, when Dear Diary has been in the background for the chosen number of
@@ -67,8 +70,11 @@ final class AppLock: ObservableObject {
         self.settings = settings
         self.authenticator = authenticator
         self.now = now
-        self.isLocked = settings.enabled
-        self.asksByItself = settings.enabled
+        // A Mac that cannot check its owner (it has no password) has no way to open a lock,
+        // so the lock stays open there.
+        let opensLocked = settings.enabled && authenticator.isAvailable()
+        self.isLocked = opensLocked
+        self.asksByItself = opensLocked
         if watchesTheMac {
             watch()
         }

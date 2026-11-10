@@ -10,22 +10,28 @@
 # Your journal and settings are not touched. The installed app uses the same
 # data as any other copy of Dear Diary on this Mac.
 #
-# The build goes into build/install inside this folder, which git ignores.
-# It is signed with your own Apple Development identity, so it runs on this
-# Mac. It is not notarised, so it is not ready to hand to other people.
+# Only one copy of the app is left on the Mac: the one in Applications. The
+# build is made in build/install.noindex inside this folder (git ignores it,
+# and Spotlight ignores folders ending in .noindex), and the built app is
+# removed from there once it has been copied.
+#
+# The app is signed with your own Apple Development identity, so it runs on
+# this Mac. It is not notarised, so it is not ready to hand to other people.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 NAME="Dear Diary"
-BUILT="build/install/Build/Products/Release/$NAME.app"
+BUILD="$PWD/build/install.noindex"
+BUILT="$BUILD/Build/Products/Release/$NAME.app"
 TARGET="/Applications/$NAME.app"
 LOG="build/install-log.txt"
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 mkdir -p build
 echo "Building…"
 if ! xcodebuild -project freewrite.xcodeproj -scheme freewrite -configuration Release \
-        -derivedDataPath "$PWD/build/install" build > "$LOG" 2>&1; then
+        -derivedDataPath "$BUILD" build > "$LOG" 2>&1; then
     echo "The build failed. The end of $LOG:"
     tail -20 "$LOG"
     exit 1
@@ -42,6 +48,11 @@ done
 echo "Installing…"
 rm -rf "$TARGET"
 ditto "$BUILT" "$TARGET"
+
+# Leave one copy: forget the built one and remove it.
+"$LSREGISTER" -u "$BUILT" > /dev/null 2>&1 || true
+rm -rf "$BUILT"
+"$LSREGISTER" -f "$TARGET" > /dev/null 2>&1 || true
 
 open "$TARGET"
 echo "Done. Dear Diary is in Applications and open."
