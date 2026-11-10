@@ -513,6 +513,14 @@ If the lock ever cannot be opened, the app can be started unlocked from Terminal
 
 Not built: a menu item or shortcut to lock, and any encryption of the files.
 
+### Installing the app on this Mac
+
+The owner opens Dear Diary from Applications, not from Xcode. `scripts/install.sh` builds the Release configuration into `build/install` (which git ignores), closes Dear Diary if it is open, replaces `/Applications/Dear Diary.app` and opens it. Run it after a change the owner should have in the app they use; a change that is only committed is not in that app yet. The installed app uses the same journal and settings as any other copy, because the bundle ID is the same.
+
+The build is signed with the owner's Apple Development identity and is not notarised, so it runs on this Mac and is not ready to hand to other people.
+
+Closing the app from a script is safe for writing, since freewrite saves on every change. It does end a talk reply or a video recording in progress, so do not run the script while the owner is in the middle of something.
+
 ## Product Vision & User Experience
 
 ### What is Freewrite?
