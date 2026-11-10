@@ -114,7 +114,7 @@ memory/
   pins.json               the user's manual fixes; read and obeyed now, written by the M6 screen
 ```
 
-`graph.json` (the compiled graph for the map) is not written yet; it comes with the map in M5. Thought notes link to each other with `[[wikilinks]]`, so the folder opens as an Obsidian vault. The exact note format is described at the top of `freewrite/Memory/ThoughtNote.swift`.
+`graph.json` (the graph as last drawn, with where each dot sits) is written by the map; see M5. Thought notes link to each other with `[[wikilinks]]`, so the folder opens as an Obsidian vault. The exact note format is described at the top of `freewrite/Memory/ThoughtNote.swift`.
 
 New files, all in `freewrite/Memory/`:
 
@@ -171,6 +171,39 @@ When memory is on, talk is given the relevant notes from memory with each messag
 - The rule against stating things that are not in the notes is an instruction to the model, not something the app can check.
 
 `MemorySampleTests.testWhatTalkIsSentFromMemoryForANewEntry` attaches the full instructions talk would be sent for a sample entry, which is the easiest way to read exactly what leaves the Mac with a talk message.
+
+### M5: the map
+
+A full-window view of memory as dots and thin lines, opened from the "Map" word in the bottom bar. It reads the memory folder and makes no AI call of its own (opening it nudges the memory engine, as switching talk on does).
+
+New files, all in `freewrite/Map/`:
+
+- `MemoryGraph.swift`: `GraphNode`, `GraphEdge`, `MemoryGraph`; `GraphBuilder`, which builds the graph from the thought notes; the `memory/graph.json` file; and `MapPalette`, the colour for each kind of thought.
+- `GraphLayout.swift`: where the dots sit.
+- `MapModel.swift`: loading, panning and zooming, what is under the pointer, moving a dot, which names are shown, and what the detail panel shows.
+- `MapView.swift`: `MapView` (what `ContentView` hosts), `MapScreen` (the canvas, the words along the bottom, the legend) and `MapWordButton` (the bottom-bar word).
+- `MapDetailView.swift`: the panel on the right for a selected thought or link.
+
+How it works (keep these when changing it):
+
+- **The notes are the source of truth.** The graph is rebuilt from the thought notes every time the map opens. One dot per thought, sized by how many different entries touched it; one line per linked pair, however many entries show the link.
+- **Only positions are remembered.** `memory/graph.json` holds the graph as last drawn, but only each dot's position is read back. The file survives "Rebuild memory" and is removed by "Forget everything".
+- **The map settles once and stays still.** `GraphLayout.settle` places only the thoughts that have no remembered position, near what they are linked to, and never moves a dot that already has a place. The same input always gives the same picture; nothing is random. It runs off the main thread.
+- **Colour is for dots only.** `MapPalette` holds the only colours in the app: seven, one per kind, stepped separately for the white and the black background. They are a tested set (neighbours in the list can be told apart, including with the common forms of colour blindness), but seven scattered colours cannot all be told apart by everyone, so the kind is always in words too: in the legend, above a dot on hover, and in the panel. Text on the map never takes a dot's colour.
+- **Names.** With 40 thoughts or fewer every name shows. With more, names are placed in order of importance (under the pointer or selected, then most recurring) and a name is skipped if it would cover another name or another dot; the ten most recurring are always named. Zooming in makes room for more.
+- **Pointer.** Drag empty space to move the map; drag a dot to move it (saved when let go); pinch to zoom; a trackpad scroll moves the map and a mouse wheel zooms it. Hovering a dot makes it and its links stand out. Clicking a dot or a line opens the panel; clicking empty space closes it. "Fit" brings everything into view. "Close" or Esc returns to the page.
+- **The panel.** For a thought: its description, how it has shifted, the quoted lines grouped by day, and what it is linked to. For a link: the reasons and the lines that show it. Clicking a day closes the map and opens that entry.
+- **Empty and error states** are one plain line each, in the map.
+
+Changes in `ContentView.swift` (all marked with a "Dear Diary" comment):
+
+1. One `@State` line, `showingMap`.
+2. The "Map" word in the bottom bar after Talk, shown when `talk.isAvailable` (AI on and a key saved).
+3. A second `.overlay` that hosts `MapView` over the whole window, the way the video recorder is shown. Its `onOpenEntry` saves the open entry, then selects and loads the chosen one, as a click in History does.
+
+Rename, merge, delete and link editing are M6.
+
+Tests: `MapTests.swift` (graph building, layout, `graph.json`, the model, the panel's content) and `MapSnapshotTests.swift` (pictures of the map with the made-up week, a thought and a link selected, a crowd of 300 thoughts, and the empty state). `MapFixtures.crowd` in `freewriteTests/MapTestSupport.swift` makes a repeatable crowd of thoughts. Never draw the real `ContentView` with the map open against real memory in a test.
 
 ## Product Vision & User Experience
 

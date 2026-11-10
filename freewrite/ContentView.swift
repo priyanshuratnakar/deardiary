@@ -138,6 +138,7 @@ struct ContentView: View {
     @State private var videoPermissionPopoverItems: [VideoPermissionPopoverItem] = []
     @State private var videoPermissionPopoverFallbackMessage: String? = nil
     @StateObject private var talk = TalkController() // Dear Diary: talk mode
+    @State private var showingMap = false // Dear Diary: the map of memory
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     let entryHeight: CGFloat = 40
     
@@ -1380,6 +1381,14 @@ struct ContentView: View {
                             Text("•")
                                 .foregroundColor(.gray)
 
+                            // Dear Diary: Map sits beside Talk, when AI is on and a key is saved.
+                            if talk.isAvailable {
+                                MapWordButton(isShowingMap: $showingMap, textColor: textColor, textHoverColor: textHoverColor, isHoveringBottomNav: $isHoveringBottomNav)
+
+                                Text("•")
+                                    .foregroundColor(.gray)
+                            }
+
                             if !isViewingVideoEntry {
                                 // Backspace toggle button
                                 Button(action: {
@@ -1725,6 +1734,30 @@ struct ContentView: View {
                     }
                 }
                 .zIndex(10)
+            }
+        }
+        .overlay {
+            // Dear Diary: the map of memory, over the whole window.
+            if showingMap && talk.isAvailable {
+                MapView(
+                    fontName: selectedFont,
+                    colorScheme: colorScheme,
+                    onClose: { showingMap = false },
+                    onOpenEntry: { entryID in
+                        // Close the map and open that day's entry, the way a click in History does.
+                        showingMap = false
+                        guard selectedEntryId != entryID,
+                              let target = entries.first(where: { $0.id == entryID }) else { return }
+                        if let currentId = selectedEntryId,
+                           let currentEntry = entries.first(where: { $0.id == currentId }),
+                           currentEntry.entryType == .text {
+                            saveEntry(entry: currentEntry)
+                        }
+                        selectedEntryId = target.id
+                        loadEntry(entry: target)
+                    }
+                )
+                .zIndex(9)
             }
         }
         .frame(minWidth: 1100, minHeight: 600)
