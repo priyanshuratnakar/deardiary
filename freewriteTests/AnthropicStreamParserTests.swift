@@ -66,6 +66,18 @@ import Testing
         #expect(AnthropicStreamParser.parse(line: "data:") == .ignored)
     }
 
+    @Test func tokenCountsAreReadFromTheStartAndTheEnd() {
+        let start = #"data: {"type": "message_start", "message": {"id": "msg_test", "type": "message", "role": "assistant", "content": [], "model": "test-model", "stop_reason": null, "stop_sequence": null, "usage": {"input_tokens": 25, "output_tokens": 1}}}"#
+        let end = #"data: {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence":null}, "usage": {"output_tokens": 15}}"#
+        let text = #"data: {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "the word usage in a reply"}}"#
+
+        #expect(AnthropicStreamParser.usage(line: start)?.input == 25)
+        #expect(AnthropicStreamParser.usage(line: start)?.output == nil)
+        #expect(AnthropicStreamParser.usage(line: end)?.output == 15)
+        #expect(AnthropicStreamParser.usage(line: text) == nil)
+        #expect(AnthropicStreamParser.usage(line: "event: message_delta") == nil)
+    }
+
     @Test func wholeExampleStreamProducesHello() {
         let events = Fixtures.helloStream
             .split(separator: "\n", omittingEmptySubsequences: false)

@@ -68,6 +68,7 @@ final class TalkController: ObservableObject {
     private let store: ConversationStore
     private let makeProvider: () -> LLMProvider
     private let now: () -> Date
+    private let talkSwitchedOn: () -> Void
 
     private var entry: TalkEntry? = nil
     /// Set when the user switches talk on, and used once: talk only speaks first at that moment.
@@ -80,12 +81,14 @@ final class TalkController: ObservableObject {
         settings: AISettings = .shared,
         store: ConversationStore = ConversationStore(),
         now: @escaping () -> Date = { Date() },
-        provider: @escaping () -> LLMProvider = { AnthropicProvider.shared }
+        provider: @escaping () -> LLMProvider = { AnthropicProvider.shared },
+        talkSwitchedOn: @escaping () -> Void = { MemoryEngine.shared.nudge(includeFresh: true) }
     ) {
         self.settings = settings
         self.store = store
         self.now = now
         self.makeProvider = provider
+        self.talkSwitchedOn = talkSwitchedOn
         self.isAvailable = settings.aiEnabled && settings.hasAPIKey
 
         settings.$aiEnabled
@@ -107,6 +110,8 @@ final class TalkController: ObservableObject {
         } else if isAvailable {
             shouldSpeakFirst = true
             isOn = true
+            // Turning talk on is one of the moments an entry counts as settled for memory.
+            talkSwitchedOn()
         }
     }
 

@@ -31,6 +31,15 @@ struct LLMRequest {
     /// If the model's safety checks decline the request, ask the service to try
     /// once more on another of its models before giving up.
     var retryIfDeclined: Bool = false
+    /// When set, the reply must be JSON in this shape (a JSON schema, as bytes).
+    var jsonSchema: Data? = nil
+}
+
+/// A whole reply, with how much it used.
+struct LLMReply: Equatable {
+    let text: String
+    var inputTokens: Int? = nil
+    var outputTokens: Int? = nil
 }
 
 protocol LLMProvider {
@@ -39,7 +48,7 @@ protocol LLMProvider {
 
     /// Sends the request and returns the whole reply at once.
     /// Used for background work that needs a complete answer, such as building memory.
-    func complete(_ request: LLMRequest) async throws -> String
+    func complete(_ request: LLMRequest) async throws -> LLMReply
 }
 
 /// Everything that can go wrong when asking for a reply, in terms the app can

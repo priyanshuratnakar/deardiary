@@ -11,8 +11,9 @@
 //  2. Nothing is logged. Not the key, not the request, not the reply.
 //
 //  API details were checked against https://docs.claude.com on 10 Nov 2026:
-//  endpoint, headers, API version, streaming event format, error shapes, and
-//  how declined replies and the server-side retry ("fallbacks") behave.
+//  endpoint, headers, API version, streaming event format, error shapes, how
+//  declined replies and the server-side retry ("fallbacks") behave, and how to
+//  ask for JSON in a fixed shape ("output_config.format").
 //
 
 import Foundation
@@ -32,10 +33,10 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
     private let access: () -> AIAccess
     private let session: URLSession
 
-    /// Models that turned out not to accept the retry option, remembered until the app quits
-    /// so later requests skip it straight away.
+    /// Models that turned out not to accept the optional features (the retry on decline,
+    /// a required JSON shape), remembered until the app quits so later requests skip them.
     private let lock = NSLock()
-    private var modelsWithoutDeclineRetry: Set<String> = []
+    private var plainOnlyModels: Set<String> = []
 
     init(access: @escaping () -> AIAccess, session: URLSession = AnthropicProvider.makeSession()) {
         self.access = access
@@ -59,43 +60,8 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    var useRetry = self.shouldUseDeclineRetry(for: request)
-                    var (bytes, http) = try await self.openStream(for: request, declineRetry: useRetry)
-
-                    // A model that does not accept the retry option rejects the whole request.
-                    // Ask once more without it, and remember if that was the cause.
-                    if useRetry, http.statusCode == 400 {
-                        useRetry = false
-                        (bytes, http) = try await self.openStream(for: request, declineRetry: false)
-                        if (200..<300).contains(http.statusCode) {
-                            self.rememberNoDeclineRetry(for: request.model)
-                        }
-                    }
-
-                    guard (200..<300).contains(http.statusCode) else {
-                        var body = Data()
-                        for try await byte in bytes {
-                            body.append(byte)
-                            if body.count >= 65_536 { break }
-                        }
-                        throw Self.error(forStatus: http.statusCode, body: body)
-                    }
-
-                    lines: for try await line in bytes.lines {
-                        switch AnthropicStreamParser.parse(line: line) {
-                        case .text(let piece):
-                            continuation.yield(piece)
-                        case .stopped(let reason):
-                            if reason == "refusal" {
-                                throw LLMError.refused
-                            }
-                        case .failed(let errorType):
-                            throw Self.error(forErrorType: errorType)
-                        case .finished:
-                            break lines
-                        case .ignored:
-                            continue
-                        }
+                    _ = try await self.run(request) { piece in
+                        continuation.yield(piece)
                     }
                     continuation.finish()
                 } catch {
@@ -108,33 +74,18 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
         }
     }
 
-    func complete(_ request: LLMRequest) async throws -> String {
+    /// The whole reply at once. It is still fetched as a stream underneath, so a
+    /// long answer cannot time out while the model is thinking.
+    func complete(_ request: LLMRequest) async throws -> LLMReply {
         do {
-            let useRetry = shouldUseDeclineRetry(for: request)
-            var (data, http) = try await send(request, declineRetry: useRetry)
-
-            if useRetry, http.statusCode == 400 {
-                (data, http) = try await send(request, declineRetry: false)
-                if (200..<300).contains(http.statusCode) {
-                    rememberNoDeclineRetry(for: request.model)
-                }
+            var text = ""
+            let outcome = try await run(request) { piece in
+                text += piece
             }
-
-            guard (200..<300).contains(http.statusCode) else {
-                throw Self.error(forStatus: http.statusCode, body: data)
-            }
-
-            let message = try JSONDecoder().decode(MessageResponse.self, from: data)
-            if message.stop_reason == "refusal" {
-                throw LLMError.refused
-            }
-            if message.stop_reason == "max_tokens" {
+            if outcome.stopReason == "max_tokens" {
                 throw LLMError.truncated
             }
-            return message.content
-                .filter { $0.type == "text" }
-                .compactMap(\.text)
-                .joined()
+            return LLMReply(text: text, inputTokens: outcome.inputTokens, outputTokens: outcome.outputTokens)
         } catch {
             throw Self.normalized(error)
         }
@@ -142,8 +93,71 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
 
     // MARK: - Sending
 
-    private func openStream(for request: LLMRequest, declineRetry: Bool) async throws -> (URLSession.AsyncBytes, HTTPURLResponse) {
-        let urlRequest = try authorizedRequest(for: request, stream: true, declineRetry: declineRetry)
+    private struct Outcome {
+        var stopReason: String? = nil
+        var inputTokens: Int? = nil
+        var outputTokens: Int? = nil
+    }
+
+    /// Sends one request and reads the reply to its end, handing each piece of text to `onText`.
+    private func run(_ request: LLMRequest, onText: (String) -> Void) async throws -> Outcome {
+        var useExtras = shouldUseExtras(for: request)
+        var (bytes, http) = try await open(request, extras: useExtras)
+
+        // A model that does not accept an optional feature rejects the whole request.
+        // Ask once more without them, and remember if that was the cause.
+        if useExtras, http.statusCode == 400 {
+            useExtras = false
+            (bytes, http) = try await open(request, extras: false)
+            if (200..<300).contains(http.statusCode) {
+                rememberPlainOnly(request.model)
+            }
+        }
+
+        guard (200..<300).contains(http.statusCode) else {
+            var body = Data()
+            for try await byte in bytes {
+                body.append(byte)
+                if body.count >= 65_536 { break }
+            }
+            throw Self.error(forStatus: http.statusCode, body: body)
+        }
+
+        var outcome = Outcome()
+        var finished = false
+
+        lines: for try await line in bytes.lines {
+            if let usage = AnthropicStreamParser.usage(line: line) {
+                outcome.inputTokens = usage.input ?? outcome.inputTokens
+                outcome.outputTokens = usage.output ?? outcome.outputTokens
+            }
+            switch AnthropicStreamParser.parse(line: line) {
+            case .text(let piece):
+                onText(piece)
+            case .stopped(let reason):
+                if reason == "refusal" {
+                    throw LLMError.refused
+                }
+                outcome.stopReason = reason
+            case .failed(let errorType):
+                throw Self.error(forErrorType: errorType)
+            case .finished:
+                finished = true
+                break lines
+            case .ignored:
+                continue
+            }
+        }
+
+        // A reply that stops without its closing event was cut off somewhere on the way.
+        guard finished else {
+            throw LLMError.unexpected
+        }
+        return outcome
+    }
+
+    private func open(_ request: LLMRequest, extras: Bool) async throws -> (URLSession.AsyncBytes, HTTPURLResponse) {
+        let urlRequest = try authorizedRequest(for: request, extras: extras)
         let (bytes, response) = try await session.bytes(for: urlRequest)
         guard let http = response as? HTTPURLResponse else {
             throw LLMError.unexpected
@@ -151,61 +165,66 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
         return (bytes, http)
     }
 
-    private func send(_ request: LLMRequest, declineRetry: Bool) async throws -> (Data, HTTPURLResponse) {
-        let urlRequest = try authorizedRequest(for: request, stream: false, declineRetry: declineRetry)
-        let (data, response) = try await session.data(for: urlRequest)
-        guard let http = response as? HTTPURLResponse else {
-            throw LLMError.unexpected
-        }
-        return (data, http)
-    }
-
     /// The gate. Throws before anything touches the network when AI is off or there is no key.
-    private func authorizedRequest(for request: LLMRequest, stream: Bool, declineRetry: Bool) throws -> URLRequest {
+    private func authorizedRequest(for request: LLMRequest, extras: Bool) throws -> URLRequest {
         switch access() {
         case .off:
             throw LLMError.aiOff
         case .noKey:
             throw LLMError.missingKey
         case .allowed(let apiKey):
-            return try Self.makeURLRequest(for: request, apiKey: apiKey, stream: stream, declineRetry: declineRetry)
+            return try Self.makeURLRequest(for: request, apiKey: apiKey, stream: true, extras: extras)
         }
     }
 
-    static func makeURLRequest(for request: LLMRequest, apiKey: String, stream: Bool, declineRetry: Bool = false) throws -> URLRequest {
-        let body = RequestBody(
-            model: request.model,
-            max_tokens: request.maxTokens,
-            system: (request.system?.isEmpty ?? true) ? nil : request.system,
-            messages: request.messages.map { RequestBody.Message(role: $0.role.rawValue, content: $0.text) },
-            stream: stream ? true : nil,
-            fallbacks: declineRetry ? "default" : nil
-        )
+    /// Builds the request. With `extras` on, the optional features the request asks for
+    /// are included: the retry on another model if declined, and a required JSON shape.
+    static func makeURLRequest(for request: LLMRequest, apiKey: String, stream: Bool, extras: Bool = false) throws -> URLRequest {
+        var body: [String: Any] = [
+            "model": request.model,
+            "max_tokens": request.maxTokens,
+            "messages": request.messages.map { ["role": $0.role.rawValue, "content": $0.text] },
+        ]
+        if let system = request.system, !system.isEmpty {
+            body["system"] = system
+        }
+        if stream {
+            body["stream"] = true
+        }
 
         var urlRequest = URLRequest(url: endpoint)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "content-type")
         urlRequest.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         urlRequest.setValue(apiVersion, forHTTPHeaderField: "anthropic-version")
-        if declineRetry {
-            urlRequest.setValue(declineRetryBeta, forHTTPHeaderField: "anthropic-beta")
+
+        if extras {
+            if request.retryIfDeclined {
+                body["fallbacks"] = "default"
+                urlRequest.setValue(declineRetryBeta, forHTTPHeaderField: "anthropic-beta")
+            }
+            if let schemaData = request.jsonSchema {
+                let schema = try JSONSerialization.jsonObject(with: schemaData)
+                body["output_config"] = ["format": ["type": "json_schema", "schema": schema]]
+            }
         }
-        urlRequest.httpBody = try JSONEncoder().encode(body)
+
+        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
         return urlRequest
     }
 
-    // MARK: - Retry-on-decline bookkeeping
+    // MARK: - Optional features a model may not accept
 
-    private func shouldUseDeclineRetry(for request: LLMRequest) -> Bool {
-        guard request.retryIfDeclined else { return false }
+    private func shouldUseExtras(for request: LLMRequest) -> Bool {
+        guard request.retryIfDeclined || request.jsonSchema != nil else { return false }
         lock.lock()
         defer { lock.unlock() }
-        return !modelsWithoutDeclineRetry.contains(request.model)
+        return !plainOnlyModels.contains(request.model)
     }
 
-    private func rememberNoDeclineRetry(for model: String) {
+    private func rememberPlainOnly(_ model: String) {
         lock.lock()
-        modelsWithoutDeclineRetry.insert(model)
+        plainOnlyModels.insert(model)
         lock.unlock()
     }
 
@@ -274,30 +293,6 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
 
     // MARK: - Wire formats
 
-    private struct RequestBody: Encodable {
-        struct Message: Encodable {
-            let role: String
-            let content: String
-        }
-
-        let model: String
-        let max_tokens: Int
-        let system: String?
-        let messages: [Message]
-        let stream: Bool?
-        let fallbacks: String?
-    }
-
-    private struct MessageResponse: Decodable {
-        struct Block: Decodable {
-            let type: String
-            let text: String?
-        }
-
-        let content: [Block]
-        let stop_reason: String?
-    }
-
     private struct ErrorEnvelope: Decodable {
         struct Detail: Decodable {
             let type: String
@@ -357,6 +352,39 @@ enum AnthropicStreamParser {
         default:
             return .ignored
         }
+    }
+
+    /// Token counts, when a line carries them: what was sent arrives at the start,
+    /// what was written arrives at the end.
+    static func usage(line: String) -> (input: Int?, output: Int?)? {
+        guard line.hasPrefix("data:"), line.contains("\"usage\"") else {
+            return nil
+        }
+        let json = line.dropFirst("data:".count).trimmingCharacters(in: .whitespaces)
+        guard let data = json.data(using: .utf8),
+              let payload = try? JSONDecoder().decode(UsagePayload.self, from: data) else {
+            return nil
+        }
+        let usage = payload.usage ?? payload.message?.usage
+        guard usage?.input_tokens != nil || usage?.output_tokens != nil else {
+            return nil
+        }
+        return (usage?.input_tokens, payload.type == "message_start" ? nil : usage?.output_tokens)
+    }
+
+    private struct UsagePayload: Decodable {
+        struct Usage: Decodable {
+            let input_tokens: Int?
+            let output_tokens: Int?
+        }
+
+        struct Message: Decodable {
+            let usage: Usage?
+        }
+
+        let type: String
+        let usage: Usage?
+        let message: Message?
     }
 
     private struct Payload: Decodable {

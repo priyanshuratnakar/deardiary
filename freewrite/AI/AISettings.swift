@@ -28,6 +28,8 @@ enum AILimits {
     /// Talk replies are short, but the model's private thinking counts towards
     /// this limit too, so it is set generously. It is a ceiling, not a cost.
     static let talkMaxTokens = 16_000
+    /// A digest is a page or so of JSON, plus the model's private thinking.
+    static let digestMaxTokens = 16_000
 }
 
 final class AISettings: ObservableObject {
@@ -52,6 +54,8 @@ final class AISettings: ObservableObject {
         static let enabled = "ai.enabled"
         static let talkModel = "ai.talkModel"
         static let digestModel = "ai.digestModel"
+        static let memoryEnabled = "ai.memoryEnabled"
+        static let memoryEnabledAt = "ai.memoryEnabledAt"
     }
 
     private let defaults: UserDefaults
@@ -72,6 +76,18 @@ final class AISettings: ObservableObject {
         didSet { defaults.set(digestModel, forKey: Key.digestModel) }
     }
 
+    /// Whether entries are digested into memory. Off until the user turns it on,
+    /// and separate from talk: talk works without it.
+    @Published var memoryEnabled: Bool {
+        didSet {
+            defaults.set(memoryEnabled, forKey: Key.memoryEnabled)
+            if memoryEnabled && !oldValue {
+                // Remember the moment, so only entries written from now on are digested.
+                defaults.set(Date().timeIntervalSince1970, forKey: Key.memoryEnabledAt)
+            }
+        }
+    }
+
     /// True when a key is saved in the Keychain. The key itself is never kept here.
     @Published private(set) var hasAPIKey: Bool
 
@@ -81,6 +97,7 @@ final class AISettings: ObservableObject {
         self.aiEnabled = defaults.bool(forKey: Key.enabled)
         self.talkModel = defaults.string(forKey: Key.talkModel) ?? Self.defaultTalkModel
         self.digestModel = defaults.string(forKey: Key.digestModel) ?? Self.defaultDigestModel
+        self.memoryEnabled = defaults.bool(forKey: Key.memoryEnabled)
         self.hasAPIKey = keychain.read() != nil
     }
 
@@ -119,6 +136,28 @@ final class AISettings: ObservableObject {
             return .noKey
         }
         return .allowed(apiKey: key)
+    }
+
+    // MARK: - For the memory engine, which works in the background
+
+    /// True when memory may be built: AI on, memory on, and a key saved.
+    /// Safe to call from any thread.
+    func memoryAllowed() -> Bool {
+        defaults.bool(forKey: Key.enabled)
+            && defaults.bool(forKey: Key.memoryEnabled)
+            && keychain.read() != nil
+    }
+
+    /// When memory was last switched on. Entries last edited before this are
+    /// left alone unless the user asks for a rebuild.
+    func memoryEnabledSince() -> Date? {
+        let stamp = defaults.double(forKey: Key.memoryEnabledAt)
+        return stamp > 0 ? Date(timeIntervalSince1970: stamp) : nil
+    }
+
+    /// The memory model as saved, read without touching anything the screen is using.
+    func savedDigestModel() -> String {
+        Self.cleaned(defaults.string(forKey: Key.digestModel) ?? "") ?? Self.defaultDigestModel
     }
 
     private static func cleaned(_ text: String) -> String? {

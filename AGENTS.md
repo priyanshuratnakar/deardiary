@@ -100,6 +100,64 @@ xcrun xcresulttool export attachments --path /tmp/deardiary.xcresult --output-pa
 
 Under test, `AISettings.shared` is a throwaway copy, so tests never read the real preferences or key.
 
+### M3: memory engine
+
+Memory is a folder of small notes the AI writes about what the user writes. It is off by default, separate from talk, and nothing is sent unless AI is on, memory is on and a key is saved.
+
+On disk, inside the journal folder:
+
+```text
+memory/
+  profile.md              a short running picture, rewritten as things change
+  thoughts/<id>.md        one readable note per thought; <id> is a readable name such as saying-yes-under-pressure
+  entries/<UUID>.json     one digest per entry: summary, thoughts touched, open loops, a fingerprint of the text
+  pins.json               the user's manual fixes; read and obeyed now, written by the M6 screen
+```
+
+`graph.json` (the compiled graph for the map) is not written yet; it comes with the map in M5. Thought notes link to each other with `[[wikilinks]]`, so the folder opens as an Obsidian vault. The exact note format is described at the top of `freewrite/Memory/ThoughtNote.swift`.
+
+New files, all in `freewrite/Memory/`:
+
+- `MemoryModel.swift`: the plain data (`Thought`, `Evidence`, `TimelineNote`, `ThoughtLink`, `EntryDigest`, `Pins`, `MemorySnapshot`) and name helpers.
+- `ThoughtNote.swift`: turns a thought into its markdown note and back.
+- `MemoryStore.swift`: the only code that reads or writes the memory folder.
+- `DigestResult.swift`: the shape of the AI's reply, the strict parser, and the same shape as a JSON schema for Claude. The parser and the schema must stay in step; a test checks this.
+- `QuoteMatcher.swift`: finds a quote in an entry. It forgives spacing and quote-mark or dash style, nothing else, and returns the entry's own text.
+- `MemoryApplier.swift`: decides what from a digest is allowed into memory. It works on data in hand and touches no files.
+- `JournalReader.swift`: lists and reads entry files for the engine. It never writes.
+- `MemoryEngine.swift`: the background engine (an `actor`), its limits, and `MemoryStatus` for Settings.
+
+How a digest goes in (keep these rules when changing the code):
+
+1. **Settled entries only.** An entry is digested when it has not been edited for 10 minutes, or a newer entry exists, or the day has changed, or talk was just switched on. An entry edited in the last minute is never digested, whatever else is true.
+2. **One request per entry.** The request carries the profile, an index of existing thoughts (`Prompts.digestIndexLine`) and the entry, with `Prompts.digestSystem` as instructions and `DigestSchema` as the required reply shape (`output_config.format` on the API).
+3. **Strict parse.** `DigestParser` refuses anything that is not exactly the expected object. Such an entry is marked `failed` in its digest file and left alone until its text changes or memory is rebuilt, so a bad answer is never asked for in a loop.
+4. **No invented evidence.** Every new thought, update, timeline note and link needs a quote that `QuoteMatcher` finds in the entry. What is stored is the text cut from the entry, never the model's copy. Items without one are refused and listed under `rejected` in the digest file.
+5. **The user's fixes win.** Anything that conflicts with `pins.json` is refused: deleted thoughts cannot come back or be added to, merged-away ids are redirected, renamed labels are kept, removed links are not put back.
+6. **Reuse before create.** A "new" thought whose label, other name or file name matches one in memory is attached to the existing thought.
+7. **Idempotent.** Applying an entry first removes everything that entry contributed before, so an edited entry never leaves duplicates. A thought left with no evidence is removed. Deleting an entry removes its lines from memory.
+8. **Unchanged entries are skipped.** The digest file stores a SHA-256 fingerprint of the entry text.
+
+Other behaviour:
+
+- Switching memory on does not send older entries: only entries edited after that moment are digested. "Rebuild memory" in Settings digests everything, after showing the count.
+- A rebuild clears what the AI built and keeps `pins.json` and any note that cannot be read (it may be a hand edit). Notes that cannot be read are never overwritten and their file names are never reused.
+- Background work stops at 40 requests a day (`MemoryLimits.dailyRequests`); a rebuild is not held back by this. Token counts are saved in each digest file.
+- Failures are quiet: one plain line in Settings, then another try after five minutes. A declined or cut-off reply marks that entry as failed and the rest carry on.
+- "Forget everything the AI has learned" deletes the memory folder (fixes included) and switches memory off, after a second confirming click.
+- The engine skips video entries, empty entries and freewrite's bundled welcome guide.
+- Talk conversations do not feed memory; only entries do.
+
+Wiring:
+
+- `ContentView.swift` is not touched by M3. The engine looks at the journal folder itself, once a minute; while memory is off each check returns at once without reading or sending anything.
+- `freewriteApp.swift` gains one line that starts the engine at launch.
+- `TalkController` nudges the engine when talk is switched on.
+- `AnthropicProvider` now fetches every reply as a stream, including whole replies, so a long answer cannot time out. It can ask for a required JSON shape and reports token counts. A reply that ends without its closing event is treated as cut off. A model that rejects the optional features (the retry on decline, the JSON shape) is asked again without them and remembered for the rest of the run.
+- `AISettings` has the memory switch (`ai.memoryEnabled`) and when it was last switched on (`ai.memoryEnabledAt`).
+
+Agents: never run the engine against the owner's real journal. Tests use `MemorySandbox` (a throwaway folder and a clock the test controls) and `MemoryWeek` (a made-up week of entries with scripted replies) from `freewriteTests/MemoryTestSupport.swift`. `MemorySampleTests` builds a whole memory folder from that week and attaches the files to the test results, which is the easiest way to see the format.
+
 ## Product Vision & User Experience
 
 ### What is Freewrite?

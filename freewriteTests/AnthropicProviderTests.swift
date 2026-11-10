@@ -174,30 +174,66 @@ import Testing
         let result = await collect(provider(.allowed(apiKey: Fixtures.fakeKey)).stream(Fixtures.request))
 
         #expect(result.text.isEmpty)
-        #expect(result.error == nil)
+        // A reply that never reaches its closing event was cut off, and is reported as such.
+        #expect(result.error as? LLMError == .unexpected)
     }
 
-    // MARK: - Whole replies (used later for building memory)
+    @Test func aReplyCutOffBeforeItsClosingEventIsNotTreatedAsComplete() async {
+        let cutOff = Fixtures.helloStream.components(separatedBy: "event: message_delta")[0]
+        StubURLProtocol.install(.init(body: cutOff))
 
-    @Test func completeJoinsTheTextBlocks() async throws {
-        StubURLProtocol.install(.init(body: Fixtures.messageBody(stopReason: "end_turn")))
+        let result = await collect(provider(.allowed(apiKey: Fixtures.fakeKey)).stream(Fixtures.request))
+
+        #expect(result.text == "Hello!")
+        #expect(result.error as? LLMError == .unexpected)
+    }
+
+    // MARK: - Whole replies (used for building memory)
+
+    @Test func completeReturnsTheWholeTextAndTheTokenCounts() async throws {
+        StubURLProtocol.install(.init(body: Fixtures.helloStream))
 
         let reply = try await provider(.allowed(apiKey: Fixtures.fakeKey)).complete(Fixtures.request)
 
-        #expect(reply == "Hi there")
+        #expect(reply.text == "Hello!")
+        #expect(reply.inputTokens == 25)
+        #expect(reply.outputTokens == 15)
         #expect(StubURLProtocol.requests.count == 1)
     }
 
     @Test func completeReportsRefusalAndCutOffReplies() async {
-        StubURLProtocol.install(.init(body: Fixtures.messageBody(stopReason: "refusal")))
+        StubURLProtocol.install(.init(body: Fixtures.refusedStream))
         await #expect(throws: LLMError.refused) {
             _ = try await provider(.allowed(apiKey: Fixtures.fakeKey)).complete(Fixtures.request)
         }
 
-        StubURLProtocol.install(.init(body: Fixtures.messageBody(stopReason: "max_tokens")))
+        let ranOutOfRoom = Fixtures.helloStream.replacingOccurrences(of: "\"stop_reason\": \"end_turn\"", with: "\"stop_reason\": \"max_tokens\"")
+        StubURLProtocol.install(.init(body: ranOutOfRoom))
         await #expect(throws: LLMError.truncated) {
             _ = try await provider(.allowed(apiKey: Fixtures.fakeKey)).complete(Fixtures.request)
         }
+    }
+
+    @Test func aRequiredJSONShapeIsSentAsDocumented() throws {
+        var request = Fixtures.request
+        request.jsonSchema = Data("{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"],\"additionalProperties\":false}".utf8)
+
+        let urlRequest = try AnthropicProvider.makeURLRequest(for: request, apiKey: Fixtures.fakeKey, stream: true, extras: true)
+        let body = try #require(urlRequest.httpBody)
+        let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let format = try #require((json["output_config"] as? [String: Any])?["format"] as? [String: Any])
+
+        #expect(format["type"] as? String == "json_schema")
+        #expect((format["schema"] as? [String: Any])?["type"] as? String == "object")
+        #expect(Set(format.keys) == ["type", "schema"])
+        // No beta header is needed for this, and none is sent.
+        #expect(urlRequest.value(forHTTPHeaderField: "anthropic-beta") == nil)
+
+        // Without the optional features switched on, the shape is left out.
+        let plain = try AnthropicProvider.makeURLRequest(for: request, apiKey: Fixtures.fakeKey, stream: true)
+        let plainBody = try #require(plain.httpBody)
+        let plainJSON = try #require(try JSONSerialization.jsonObject(with: plainBody) as? [String: Any])
+        #expect(plainJSON["output_config"] == nil)
     }
 
     @Test func completeReportsMalformedRepliesAsUnexpected() async {
@@ -211,7 +247,9 @@ import Testing
     // MARK: - Retry on another model when a reply is declined
 
     @Test func retryOptionAddsOneFieldAndOneHeader() throws {
-        let urlRequest = try AnthropicProvider.makeURLRequest(for: Fixtures.request, apiKey: Fixtures.fakeKey, stream: true, declineRetry: true)
+        var request = Fixtures.request
+        request.retryIfDeclined = true
+        let urlRequest = try AnthropicProvider.makeURLRequest(for: request, apiKey: Fixtures.fakeKey, stream: true, extras: true)
 
         #expect(urlRequest.value(forHTTPHeaderField: "anthropic-beta") == "server-side-fallback-2026-07-01")
 
@@ -285,11 +323,11 @@ import Testing
 
         StubURLProtocol.install(
             .init(status: 400, body: Fixtures.errorBody(type: "invalid_request_error", message: "fallbacks: not supported for this model")),
-            .init(body: Fixtures.messageBody(stopReason: "end_turn"))
+            .init(body: Fixtures.helloStream)
         )
         let reply = try await provider(.allowed(apiKey: Fixtures.fakeKey)).complete(request)
 
-        #expect(reply == "Hi there")
+        #expect(reply.text == "Hello!")
         #expect(StubURLProtocol.requests.count == 2)
     }
 

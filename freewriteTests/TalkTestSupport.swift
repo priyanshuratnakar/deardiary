@@ -65,15 +65,15 @@ final class FakeProvider: LLMProvider, @unchecked Sendable {
         }
     }
 
-    func complete(_ request: LLMRequest) async throws -> String {
+    func complete(_ request: LLMRequest) async throws -> LLMReply {
         switch nextStep(for: request) {
         case .reply(let pieces):
-            return pieces.joined()
+            return LLMReply(text: pieces.joined(), inputTokens: 1200, outputTokens: 300)
         case .fail(let error), .replyThenFail(_, let error):
             throw error
         case .hang:
             try await Task.sleep(nanoseconds: 60_000_000_000)
-            return ""
+            return LLMReply(text: "")
         }
     }
 }
@@ -113,7 +113,8 @@ final class TalkSandbox {
             settings: settings,
             store: store,
             now: { [unowned self] in self.tick() },
-            provider: { provider }
+            provider: { provider },
+            talkSwitchedOn: {}
         )
     }
 

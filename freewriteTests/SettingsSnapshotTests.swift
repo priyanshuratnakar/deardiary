@@ -15,19 +15,31 @@ final class SettingsSnapshotTests: XCTestCase {
 
     @MainActor
     func testSettingsDrawsWithAIOffInLightMode() throws {
-        try snapshot(named: "settings-light-ai-off", dark: false) { _ in }
+        try snapshot(named: "settings-light-ai-off", dark: false) { _, _ in }
     }
 
     @MainActor
-    func testSettingsDrawsWithAIOnInDarkMode() throws {
-        try snapshot(named: "settings-dark-ai-on", dark: true) { settings in
+    func testSettingsDrawsWithAIAndMemoryOnInDarkMode() throws {
+        try snapshot(named: "settings-dark-ai-on", dark: true) { settings, memory in
             settings.aiEnabled = true
             settings.saveAPIKey("made-up-key-for-tests")
+            settings.memoryEnabled = true
+            memory.summary = MemorySummary(thoughts: 14, digestedEntries: 9, waitingEntries: 1)
         }
     }
 
     @MainActor
-    private func snapshot(named name: String, dark: Bool, configure: (AISettings) -> Void) throws {
+    func testSettingsShowsAMemoryProblemAsOnePlainLine() throws {
+        try snapshot(named: "settings-light-memory-problem", dark: false) { settings, memory in
+            settings.aiEnabled = true
+            settings.saveAPIKey("made-up-key-for-tests")
+            settings.memoryEnabled = true
+            memory.summary = MemorySummary(thoughts: 3, digestedEntries: 2, waitingEntries: 4, problem: LLMError.offline.userMessage)
+        }
+    }
+
+    @MainActor
+    private func snapshot(named name: String, dark: Bool, configure: (AISettings, MemoryStatus) -> Void) throws {
         let suiteName = "deardiary.tests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         let keychain = Keychain(service: "com.priyanshuratnakar.deardiary.tests.\(UUID().uuidString)", account: "test")
@@ -38,31 +50,12 @@ final class SettingsSnapshotTests: XCTestCase {
 
         defaults.set(dark ? "dark" : "light", forKey: "colorScheme")
         let settings = AISettings(defaults: defaults, keychain: keychain)
-        configure(settings)
+        let memoryStatus = MemoryStatus()
+        configure(settings, memoryStatus)
 
-        let view = SettingsView(settings: settings)
+        let view = SettingsView(settings: settings, memoryStatus: memoryStatus, memoryActions: .none)
             .defaultAppStorage(defaults)
 
-        let hosting = NSHostingView(rootView: view)
-        hosting.frame = NSRect(origin: .zero, size: hosting.fittingSize)
-
-        let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-        window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-        window.contentView = hosting
-        hosting.layoutSubtreeIfNeeded()
-
-        let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-
-        XCTAssertGreaterThan(bitmap.pixelsWide, 0)
-        XCTAssertGreaterThan(bitmap.pixelsHigh, 0)
-
-        let image = NSImage(size: hosting.bounds.size)
-        image.addRepresentation(bitmap)
-
-        let attachment = XCTAttachment(image: image)
-        attachment.name = name
-        attachment.lifetime = .keepAlways
-        add(attachment)
+        attach(try renderOffscreen(view, dark: dark), named: name)
     }
 }

@@ -14,11 +14,20 @@ import AppKit
 
 struct SettingsView: View {
     @ObservedObject private var settings: AISettings
+    @ObservedObject private var memoryStatus: MemoryStatus
+    private let memoryActions: MemoryActions
     @AppStorage("colorScheme") private var colorSchemeString: String = "light"
 
-    /// The app always uses the shared settings. Tests pass in a throwaway copy.
-    init(settings: AISettings = .shared) {
+    /// The app always uses the shared settings and the real memory engine.
+    /// Tests pass in throwaway copies.
+    init(
+        settings: AISettings = .shared,
+        memoryStatus: MemoryStatus = MemoryEngine.shared.status,
+        memoryActions: MemoryActions = .live
+    ) {
         self.settings = settings
+        self.memoryStatus = memoryStatus
+        self.memoryActions = memoryActions
     }
 
     @State private var keyDraft = ""
@@ -27,6 +36,9 @@ struct SettingsView: View {
     @State private var testNote: String? = nil
     @State private var isTesting = false
     @State private var testTask: Task<Void, Never>? = nil
+    /// Set while asking "really rebuild?", to the number of entries it would send.
+    @State private var rebuildCount: Int? = nil
+    @State private var confirmingForget = false
 
     // MARK: - Colours, matched to ContentView
 
@@ -47,10 +59,15 @@ struct SettingsView: View {
             Divider()
             modelSection
             Divider()
+            memorySection
+            Divider()
             testSection
         }
         .frame(width: 440)
         .background(backgroundColor)
+        .onAppear {
+            memoryActions.refresh()
+        }
         .onDisappear {
             testTask?.cancel()
         }
@@ -162,6 +179,125 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Memory
+
+    private var memorySection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SettingsWordButton(
+                title: settings.memoryEnabled ? "Memory is On" : "Memory is Off",
+                quietColor: quietColor,
+                strongColor: strongColor
+            ) {
+                settings.memoryEnabled.toggle()
+                rebuildCount = nil
+                confirmingForget = false
+            }
+
+            Text("When memory is on, each entry is sent to Claude once after you have finished with it, and what it learns is saved as notes in your memory folder. Talk works without it.")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let line = memoryLine {
+                Text(line)
+                    .font(.system(size: 13))
+                    .foregroundColor(bodyColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let problem = memoryStatus.summary.problem {
+                Text(problem)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let rebuildCount {
+                confirmation(
+                    "This sends \(rebuildCount) \(rebuildCount == 1 ? "entry" : "entries") to Claude and replaces what it has learned. Your fixes are kept.",
+                    confirm: "Start rebuild",
+                    onConfirm: {
+                        self.rebuildCount = nil
+                        memoryActions.rebuild()
+                    },
+                    onCancel: { self.rebuildCount = nil }
+                )
+            } else if confirmingForget {
+                confirmation(
+                    "This deletes the memory folder, including your fixes, and turns memory off. Your entries are not touched.",
+                    confirm: "Forget now",
+                    onConfirm: {
+                        confirmingForget = false
+                        settings.memoryEnabled = false
+                        memoryActions.forget()
+                    },
+                    onCancel: { confirmingForget = false }
+                )
+            } else {
+                HStack(spacing: 8) {
+                    if memoryStatus.summary.isWorking {
+                        SettingsWordButton(title: "Stop", quietColor: quietColor, strongColor: strongColor) {
+                            memoryActions.stop()
+                        }
+                    } else {
+                        SettingsWordButton(
+                            title: "Rebuild memory",
+                            quietColor: quietColor,
+                            strongColor: strongColor,
+                            isDisabled: !(settings.aiEnabled && settings.memoryEnabled && settings.hasAPIKey)
+                        ) {
+                            Task { @MainActor in
+                                rebuildCount = await memoryActions.countForRebuild()
+                            }
+                        }
+                    }
+                    Text("•").foregroundColor(.gray)
+                    SettingsWordButton(title: "Open memory folder", quietColor: quietColor, strongColor: strongColor) {
+                        memoryActions.openFolder()
+                    }
+                }
+
+                SettingsWordButton(title: "Forget everything the AI has learned", quietColor: quietColor, strongColor: strongColor) {
+                    confirmingForget = true
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    /// One line on what memory holds or is doing, or nil when there is nothing to say.
+    private var memoryLine: String? {
+        let summary = memoryStatus.summary
+        if summary.isWorking {
+            return "Reading entry \(min(summary.workDone + 1, summary.workTotal)) of \(summary.workTotal)…"
+        }
+        let waiting = summary.waitingEntries == 0
+            ? nil
+            : "\(summary.waitingEntries) \(summary.waitingEntries == 1 ? "entry" : "entries") waiting"
+        if summary.thoughts > 0 || summary.digestedEntries > 0 {
+            let held = "\(summary.thoughts) \(summary.thoughts == 1 ? "thought" : "thoughts") from \(summary.digestedEntries) \(summary.digestedEntries == 1 ? "entry" : "entries")"
+            return waiting.map { "\(held). \($0)." } ?? "\(held)."
+        }
+        guard settings.memoryEnabled else { return nil }
+        return waiting.map { "\($0)." } ?? "Nothing in memory yet."
+    }
+
+    /// A question asked in place, with a word to go ahead and a word to back out.
+    private func confirmation(_ question: String, confirm: String, onConfirm: @escaping () -> Void, onCancel: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(question)
+                .font(.system(size: 13))
+                .foregroundColor(bodyColor)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                SettingsWordButton(title: confirm, quietColor: quietColor, strongColor: strongColor, action: onConfirm)
+                Text("•").foregroundColor(.gray)
+                SettingsWordButton(title: "Cancel", quietColor: quietColor, strongColor: strongColor, action: onCancel)
+            }
+        }
+    }
+
     // MARK: - Test connection
 
     private var testSection: some View {
@@ -225,6 +361,34 @@ struct SettingsView: View {
             isTesting = false
         }
     }
+}
+
+/// What the memory words in Settings do. Tests pass in versions that do nothing.
+struct MemoryActions {
+    var refresh: () -> Void
+    var countForRebuild: () async -> Int
+    var rebuild: () -> Void
+    var stop: () -> Void
+    var forget: () -> Void
+    var openFolder: () -> Void
+
+    static let live = MemoryActions(
+        refresh: { Task { await MemoryEngine.shared.refreshStatus() } },
+        countForRebuild: { await MemoryEngine.shared.entriesToRebuild() },
+        rebuild: { Task { await MemoryEngine.shared.rebuild() } },
+        stop: { Task { await MemoryEngine.shared.stop() } },
+        forget: { Task { await MemoryEngine.shared.forgetEverything() } },
+        openFolder: { NSWorkspace.shared.open(MemoryStore().ensureFolder()) }
+    )
+
+    static let none = MemoryActions(
+        refresh: {},
+        countForRebuild: { 0 },
+        rebuild: {},
+        stop: {},
+        forget: {},
+        openFolder: {}
+    )
 }
 
 /// A word you can click, in the same style as freewrite's bottom bar:

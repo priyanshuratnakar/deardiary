@@ -17,6 +17,10 @@ struct freewriteApp: App {
         if let fontURL = Bundle.main.url(forResource: "Lato-Regular", withExtension: "ttf") {
             CTFontManagerRegisterFontsForURL(fontURL as CFURL, .process, nil)
         }
+
+        // Dear Diary: the memory engine checks the journal folder in the background.
+        // It does nothing unless AI and memory are both switched on in Settings.
+        MemoryEngine.shared.start()
     }
      
     var body: some Scene {
