@@ -104,15 +104,17 @@ Under test, `AISettings.shared` is a throwaway copy, so tests never read the rea
 
 ### M3: memory engine
 
-Memory is a folder of small notes the AI writes about what the user writes. It is off by default, separate from talk, and nothing is sent unless AI is on, memory is on and a key is saved.
+Memory is a folder of small notes built from what the user writes. It is off by default, separate from talk, and nothing is sent unless AI is on, memory is on and a key is saved.
+
+**M14 changed the shape of memory. Read M14 before changing anything here.** The AI no longer names or describes thoughts, writes timeline notes or writes a profile; it lists what is in an entry and copies a line for each item. What still holds from this section, unchanged: when an entry counts as settled, the strict parse, no invented evidence, the user's fixes win, reuse before create, applying an entry twice changes nothing, unchanged entries are skipped, the limits, quiet failures, rebuild and forget.
 
 On disk, inside the journal folder:
 
 ```text
 memory/
-  profile.md              a short running picture, rewritten as things change
-  thoughts/<id>.md        one readable note per thought; <id> is a readable name such as saying-yes-under-pressure
-  entries/<UUID>.json     one digest per entry: summary, thoughts touched, open loops, a fingerprint of the text
+  profile.md              a few counted lines written by the app (M14); before M14, a paragraph the AI wrote
+  thoughts/<id>.md        one readable note per thought; <id> is a readable name such as meera or the-pricing-page
+  entries/<UUID>.json     one digest per entry: the writer's own lines from it (M14), thoughts touched, a fingerprint of the text
   pins.json               the user's manual fixes, made on the map (see M6); the AI must obey them
 ```
 
@@ -123,7 +125,7 @@ New files, all in `freewrite/Memory/`:
 - `MemoryModel.swift`: the plain data (`Thought`, `Evidence`, `TimelineNote`, `ThoughtLink`, `EntryDigest`, `Pins`, `MemorySnapshot`) and name helpers.
 - `ThoughtNote.swift`: turns a thought into its markdown note and back.
 - `MemoryStore.swift`: the only code that reads or writes the memory folder.
-- `DigestResult.swift`: the shape of the AI's reply, the strict parser, and the same shape as a JSON schema for Claude. The parser and the schema must stay in step; a test checks this.
+- `DigestResult.swift`: the shape of the AI's reply (a new shape since M14), the strict parser, and the same shape as a JSON schema. The parser and the schema must stay in step; a test checks this.
 - `QuoteMatcher.swift`: finds a quote in an entry. It forgives spacing and quote-mark or dash style, nothing else, and returns the entry's own text.
 - `MemoryApplier.swift`: decides what from a digest is allowed into memory. It works on data in hand and touches no files.
 - `JournalReader.swift`: lists and reads entry files for the engine. It never writes.
@@ -132,9 +134,9 @@ New files, all in `freewrite/Memory/`:
 How a digest goes in (keep these rules when changing the code):
 
 1. **Settled entries only.** An entry is digested when it has not been edited for 10 minutes, or a newer entry exists, or the day has changed, or talk was just switched on. An entry edited in the last minute is never digested, whatever else is true.
-2. **One request per entry.** The request carries the profile, an index of existing thoughts (`Prompts.digestIndexLine`) and the entry, with `Prompts.digestSystem` as instructions and `DigestSchema` as the required reply shape (`output_config.format` on the API).
+2. **One request per entry.** The request carries the names already in memory (`MemoryIndex`, since M14; before that the profile and an index of thoughts) and the entry, with `Prompts.digestSystem` as instructions and `DigestSchema` as the required reply shape (`output_config.format` on the API).
 3. **Strict parse.** `DigestParser` refuses anything that is not exactly the expected object. Such an entry is marked `failed` in its digest file and left alone until its text changes or memory is rebuilt, so a bad answer is never asked for in a loop.
-4. **No invented evidence.** Every new thought, update, timeline note and link needs a quote that `QuoteMatcher` finds in the entry. What is stored is the text cut from the entry, never the model's copy. Items without one are refused and listed under `rejected` in the digest file.
+4. **No invented evidence.** Every item needs a quote that `QuoteMatcher` finds in the entry. What is stored is the text cut from the entry, never the model's copy. Items without one are refused and listed under `rejected` in the digest file.
 5. **The user's fixes win.** Anything that conflicts with `pins.json` is refused: deleted thoughts cannot come back or be added to, merged-away ids are redirected, renamed labels are kept, removed links are not put back.
 6. **Reuse before create.** A "new" thought whose label, other name or file name matches one in memory is attached to the existing thought.
 7. **Idempotent.** Applying an entry first removes everything that entry contributed before, so an edited entry never leaves duplicates. A thought left with no evidence is removed. Deleting an entry removes its lines from memory.
@@ -191,7 +193,7 @@ How it works (keep these when changing it):
 - **The notes are the source of truth.** The graph is rebuilt from the thought notes every time the map opens. One dot per thought, sized by how many different entries touched it; one line per linked pair, however many entries show the link.
 - **Only positions are remembered.** `memory/graph.json` holds the graph as last drawn, but only each dot's position is read back. The file survives "Rebuild memory" and is removed by "Forget everything".
 - **The map settles once and stays still.** `GraphLayout.settle` places only the thoughts that have no remembered position, near what they are linked to, and never moves a dot that already has a place. The same input always gives the same picture; nothing is random. It runs off the main thread.
-- **Colour is for dots only.** `MapPalette` holds the only colours in the app: seven, one per kind, stepped separately for the white and the black background. They are a tested set (neighbours in the list can be told apart, including with the common forms of colour blindness), but seven scattered colours cannot all be told apart by everyone, so the kind is always in words too: in the legend, above a dot on hover, and in the panel. Text on the map never takes a dot's colour.
+- **Colour is for dots only.** `MapPalette` holds the only colours in the app: seven, stepped separately for the white and the black background. (Since M14 the five kinds memory keeps use five of them, and a kind from before M14 keeps the colour it had.) They are a tested set (neighbours in the list can be told apart, including with the common forms of colour blindness), but seven scattered colours cannot all be told apart by everyone, so the kind is always in words too: in the legend, above a dot on hover, and in the panel. Text on the map never takes a dot's colour.
 - **Names.** With 40 thoughts or fewer every name shows. With more, names are placed in order of importance (under the pointer or selected, then most recurring) and a name is skipped if it would cover another name or another dot; the ten most recurring are always named. Zooming in makes room for more.
 - **Pointer.** Drag empty space to move the map; drag a dot to move it (saved when let go); pinch to zoom; a trackpad scroll moves the map and a mouse wheel zooms it. Hovering a dot makes it and its links stand out. Clicking a dot or a line opens the panel; clicking empty space closes it. "Fit" brings everything into view. "Close" or Esc returns to the page.
 - **The panel.** For a thought: its description, how it has shifted, the quoted lines grouped by day, and what it is linked to. For a link: the reasons and the lines that show it. Clicking a day closes the map and opens that entry.
@@ -261,6 +263,8 @@ When it runs:
 - At the end of "Rebuild memory" (not held back by the daily limit).
 - From "Tidy memory now" in Settings.
 
+**M14 cut the tidy down to points 1, 2 and 5 below.** It no longer adds patterns or links (point 3) or writes the profile (point 4): what recurs is counted by the app. `TidyResult` holds merges and retirements only.
+
 What it may do, and the checks (keep these when changing the code):
 
 1. **Merge duplicates.** Both thoughts must exist. A thought the user renamed or linked by hand is never folded away.
@@ -269,7 +273,7 @@ What it may do, and the checks (keep these when changing the code):
 4. **Refresh the profile.**
 5. **The user's fixes have the last word**, exactly as in a digest.
 
-An answer that cannot be read changes nothing and is not asked for again until the next tidy is due. Network trouble shows one plain line in Settings and leaves the tidy due. Settings shows what the last tidy did, for example "Tidied on Monday 30 November 2026: merged 1, retired 2, 1 pattern across weeks." The time and that line are kept in UserDefaults (`memory.tidy.at`, `memory.tidy.line`) and are cleared by "Forget everything".
+An answer that cannot be read changes nothing and is not asked for again until the next tidy is due. Network trouble shows one plain line in Settings and leaves the tidy due. Settings shows what the last tidy did, for example "Tidied on Monday 30 November 2026: merged 1, retired 2." The time and that line are kept in UserDefaults (`memory.tidy.at`, `memory.tidy.line`) and are cleared by "Forget everything".
 
 Tests: `MemoryFixesTests.swift` (each fix, and `FixesSurviveARebuildTests`, which rebuilds memory after each kind of fix), `MemoryTidyTests.swift` (the parser and schema, `MemoryTidier`, and when the tidy runs), `MapFixTests.swift` (the fix steps on the map through the real engine, and pictures of the panel in each state). `MemorySandbox.quietLimits` switches off the tidy after a rebuild for tests that are not about it. `FakeProvider.onRequest` lets a test change memory while a request is "with the AI".
 
@@ -547,7 +551,7 @@ Step 2 of "Making the AI layer better" (below). The owner found Talk generic; th
 
 1. **The model never types an earlier line or its day.** It is given numbered lines and points at one by writing its number in curly brackets, like `{2}`. `TalkReply.shown` puts the line there as its own paragraph, `> Monday 2 November 2026: "the words"`, from memory. A number that is not on offer is taken out, a line is written out once, and a `>` typed by a model is taken off, so nothing a model made up can be drawn as the writer's earlier words. This exists because a model asked to retype a line changed a word of it.
 2. **A model sees its own past replies the way it is asked to write them.** `history(from:lines:)` turns a written-out line back into its number if that line is still on offer and leaves it out if not, and puts the care mark back on a reply that came with the help line.
-3. **What memory gives Talk is the profile and at most twelve numbered lines** (`Prompts.earlierLineLimit`): each with its day and the name of the thought it belongs to. Every thought's most recent line is taken first, so no thought crowds out the others, and a line under two thoughts is offered once. `ContextBuilder` still picks descriptions, timeline notes, links and day summaries, but they are no longer laid out for the model: only what the app can show word for word is. Do not add the AI's own notes back without asking.
+3. **What memory gives Talk is the profile and at most twelve numbered lines** (`Prompts.earlierLineLimit`): each with its day and what it is ("about Meera", or since M14 "what they told themselves, on a day they wrote about Meera"). Every thought's most recent line is taken first, so no thought crowds out the others, and a line under two thoughts is offered once. `ContextBuilder` still picks descriptions, timeline notes, links and day summaries, but they are no longer laid out for the model: only what the app can show word for word is. Do not add the AI's own notes back without asking.
 4. **The help line is the app's.** It is always `Prompts.talkCareLine`. The model is never given the phone number and is told not to list numbers. The line is never sent to a model.
 5. **When the help line shows.** (a) `CareNet` finds danger words in the message just sent, or in the entry if this conversation has not shown the line yet: the line is saved and shown at once, before any reply, so it is there even if no reply comes; that reply is sent `talkDangerNote` and nothing from memory. (b) The model marks its reply `[care]` (never shown) or asks "are you safe": the line is shown with that reply, unless it is already among the six lines above (`TalkLimits.careLineGap`).
 6. **Where the help line sits.** It is saved just before the reply it belongs with and drawn under that reply (`TalkColumn.drawingOrder`); while that reply is on its way it waits below the "…". A conversation that holds only the help line still lets talk speak first.
@@ -562,15 +566,80 @@ Step 2 of "Making the AI layer better" (below). The owner found Talk generic; th
 
 Tests: `TalkReplyTests.swift` (`TalkReplyTests`, `CareNetTests`, `TalkCareTests`, `TalkQuestionTests`, `TalkEarlierLineTests`, `TalkColumnOrderTests`), more in `TalkControllerTests.swift` and `ContextBuilderTests.swift`, and three more pictures in `TalkSnapshotTests.swift`. Not tried: the new instructions with Claude or OpenAI, and the column in the installed app with a real reply arriving.
 
+### M14: memory shaped for a journal (part 1)
+
+Step 3 of "Making the AI layer better" (below). The owner found the memory generic: "not fine-tuned for mental health and journalling". The cause was the instructions, which asked the AI what keeps happening in the writer's life and why, and let it name things. It answered with "Setting Boundaries", "Health Anxiety", "Performative Progress": its words, not the writer's, and sometimes a diagnosis. `ContentView.swift`, the entitlements and the project file were not touched.
+
+**The idea: memory keeps the writer's words, not the AI's.** The AI finds and copies. The app decides everything else.
+
+- **A thought is a lasting thing**, and a dot on the map: a person, a topic, something that helped, something still open, and a feeling once it has been named in the same words on two days.
+- **Everything else stays on the day**, in the writer's own words, with a small word for what it is: felt (pleasant, unpleasant or mixed), told yourself, happened, wanted. These lines show on every dot that day touched.
+- **The AI writes nothing about the writer.** No description of a thought, no "how it shifted" notes, no profile in prose, no summary of an entry.
+- **What recurs is counted by the app** in fixed wording: "In 4 entries", "On 3 of those 4 days you also named an unpleasant feeling", "Open since Sunday 8 November 2026".
+- **A line between two thoughts means one thing:** the writer put them in the same sentence, or linked them by hand.
+- **Something still open can be closed** on the map: Done, or Not doing it.
+
+**Files**
+
+- `freewrite/Memory/MemoryModel.swift`: `ThoughtKind` (five journal kinds, plus the five from before M14), `DayLine` (one of the writer's lines, with its kind, and for a feeling its word and tone), `EntryDigest.lines`, and `Pins.Deletion.settled`.
+- `freewrite/Memory/DigestResult.swift`: the new reply shape (people, topics, feelings, happened, self_talk, helped, matters, open_loops), `DigestParser` and `DigestSchema`.
+- `freewrite/Memory/MemoryApplier.swift`: what becomes a thought and what stays on the day; and `FeelingDots`, which counts feelings across days.
+- `freewrite/Memory/MemoryCounts.swift` (new): the counted lines for the panel, the counted profile, and `MemoryIndex` (the names handed to the AI before it reads an entry).
+- `freewrite/Memory/MemoryTidier.swift` and `TidyResult.swift`: merges and retirements only.
+- `freewrite/Memory/MemoryFixes.swift`: `MemoryFix.settle`.
+- `freewrite/Memory/ContextBuilder.swift`: Talk is also offered what the writer told themselves, wanted and felt on the days behind a thought.
+- `freewrite/AI/Prompts.swift`: `digestSystem`, `digestMessage(index:…)`, `tidySystem`, `tidyMessage`.
+- `freewrite/Map/`: `MapPalette` (colours for the new kinds), `GraphNode.mapLabel`, days with only lines, `MapTaggedLine`, the counted lines and the fix words for something still open.
+- `freewrite/Settings/SettingsView.swift`: one line when some entries are still in the older shape.
+
+**Rules the code follows (keep them when changing it)**
+
+1. **The AI is asked only to find and copy.** `Prompts.digestSystem` asks for a list of what is in the entry, each item with a line copied from it. Never ask it for a label of its own, a description, a cause, a pattern, a summary or a profile. A test checks the instructions contain none of those words. The reply shape has no field for them, and the strict parser refuses a reply that adds one.
+2. **Names already in memory are handed over, and only names.** `MemoryIndex` lists the people, topics and feelings (in the writer's words, with tone) that memory holds, so the AI uses an existing name instead of making a second one. No line from an earlier entry goes with them. A name is also matched without its leading "the", "a", "an" or "my" (`MemoryText.nameWithoutArticle`). The AI's old themes (kinds from before M14) are not handed back as topics.
+3. **The app decides what becomes a thought.** People and topics do. Something that helped does only if its line sits with a pleasant feeling the writer named in the same entry; the AI's say-so alone is refused ("The entry does not say they felt better."). Something still open does, and is named by the writer's own line (`MemoryApplier.openLabel`), not by the AI's phrase for it.
+4. **A feeling's word is kept only if it is the writer's own.** If the word the AI gives is not in the entry, the line is still kept, without a word, and is never counted.
+5. **A feeling becomes a thought by counting.** `FeelingDots.reconcile` runs after every entry is read or removed. The same words on two or more days (ignoring "so", "very", "felt" and the like in front) make a thought whose id starts with `felt-`; when a day goes and one day is left, the thought goes back to being a line. The AI is not asked to group feelings.
+6. **A link is a shared sentence.** After an entry is read, two thoughts it touched are linked if their lines are the same line, one line is inside the other, or one line names the other thought. The reason stored is "in the same sentence" (`MemoryApplier.sameSentence`). The AI is not asked for links or reasons. Two thoughts in the same entry but different sentences are joined only by their day.
+7. **Counted lines never claim a cause.** `MemoryCounts` uses fixed wording. Keep "because", "always", "often", "usually" and "tends to" out of it; a test checks. The line about unpleasant feelings is shown only from three days read in the writer's own words, and says "also", not "because".
+8. **The profile is counted too.** `MemoryCounts.profile` writes at most three lines (most written about in the last month, how many things are open, what helped). It is rewritten after every reading, fix and tidy. It is empty until there is something to count.
+9. **The tidy does two things.** Merge two thoughts that are the same thing, and retire people and topics seen once more than three weeks ago. It never folds a person into something that is not a person, never touches a feeling or something still open, and never retires something that helped.
+10. **Closing something still open is a fix.** It is recorded with the deletions in `pins.json` (`"settled": "done"` or `"dropped"`, and `"on"`), so every rule that keeps a deleted thought from coming back also keeps a closed one from coming back, through a rebuild too. Its line stays on its day and is shown with "done" or "not doing it" in place of "still open" (`Pins.settled(forLine:)`).
+11. **A memory from before M14 keeps working until it is rebuilt.** Old notes, kinds and digests are still read, drawn and fixable; nothing is sent to bring them across by itself. Settings shows `SettingsView.olderShapeLine` while any digest has no `lines` (`MemorySummary.hasOlderShape`). `MemoryWeek.built()` in the tests is that older memory, kept exactly as the earlier version produced it, so this stays covered. `MemoryWeek.read()` is the same week in the new shape.
+12. **On the map,** a day that touched no thought but has lines is still a day, on its own. A name that is a sentence (something still open) is placed after the other names and left out if it would cover one; pointing at it or selecting it brings it back. `GraphNode.mapLabel` cuts a long name short on the map only.
+
+`pins.json` with something closed:
+
+```json
+{"deletions": [{"id": "need-to-tell-her-by-tuesday", "label": "Need to tell her by Tuesday", "names": [], "settled": "done", "on": "2026-11-12"}]}
+```
+
+A digest file now holds the day's lines:
+
+```json
+"lines": [
+  {"kind": "felt", "quote": "Still felt my stomach drop", "word": "stomach drop", "tone": "unpleasant"},
+  {"kind": "told_yourself", "quote": "First time I haven't just said yes."},
+  {"kind": "still_open", "quote": "I said I needed to think about it."}
+]
+```
+
+**Measured** on 12 Nov 2026 with `gemma4:12b` and 18 made-up entries, through the app's own engine and Ollama client (see "After the Memory build" in `docs/research/model-comparison.md`): 18 of 18 read, 80 seconds in all, 75 lines and 39 quotes all found in their entries, 12 people and 12 topics with names reused across entries, one feeling that became a dot, and two items refused by the app.
+
+**Weak spots that remain:** "what helped" is found rarely, because it needs the writer to say so and the app to see a pleasant feeling in the same line. The same feeling in different words stays separate ("Couldn't sleep", "Slept badly") until the user merges them. One-off topics appear ("his trek") and go after three weeks. What the AI files under "told yourself" is sometimes just something that happened.
+
+**Not built (part 2, show it first):** something still open closing by itself when a later entry says so; a line the writer keeps telling themselves becoming a dot; any overview screen.
+
+Tests: `MemoryJournalTests.swift` (kinds, counts, the names handed over, the map's panel, closing something through the real engine, pictures), `MemoryApplierTests.swift` (rewritten, with `FeelingDotsTests`), and the parser, tidy, engine and fixes tests brought to the new shape. Not tried: the owner's own journal (a rebuild is theirs to start), Claude or OpenAI with the new shape, and the new panel with real clicks.
+
 ### Making the AI layer better (in progress)
 
 The owner found the memory generic (not shaped for a journal or for mental health) and Talk generic. The research, a baseline and the plan are in `docs/research/ai-layer.md`. Three steps:
 
 1. **A better local model, measured. Done** (`docs/research/model-comparison.md`). `gemma4:12b` is the local model to use on the owner's Mac (M5 Pro, 24 GB), for both jobs; the app's saved local models were switched to it. This step found and fixed rules 10 and 11 of M8. Therapy-tuned open models were looked at and rejected: none has an independent evaluation, and general models did better in the studies found.
 2. **Talk that is specific. Done:** M13 above. The draft files it grew from are gone from `scripts/model-check/`; the app's own instructions are the only copy.
-3. **Memory shaped for a journal. Not built.** A draft first pass is `scripts/model-check/memory-new.txt`: people, feelings in the writer's own words marked pleasant or unpleasant, events, self-talk, what helped, what matters, open loops. Patterns are to be counted by the app, not written by the model.
+3. **Memory shaped for a journal. Part 1 done:** M14 above. Part 2 is not built and must be shown first: something still open closing by itself when a later entry says so (with a quoted line), and a line the writer keeps telling themselves becoming a dot.
 
-`scripts/model-check/compare.py` runs the made-up entries in `entries.py` through a model in the local Ollama and measures both jobs (`memory-app`, `memory-new`, `talk-app`, `talk-hard-app`). It reads the app's instructions and the safety net's phrases from the Swift source, and for Talk it does what the app does around the model, so it measures what the app would really send and show. Use it before changing a prompt or recommending a model. Show each step to the owner before building it, as always.
+`scripts/model-check/compare.py` runs the made-up entries in `entries.py` through a model in the local Ollama and measures both jobs (`memory-app`, `talk-app`, `talk-hard-app`). It reads the app's instructions and the safety net's phrases from the Swift source, and for Talk it does what the app does around the model, so it measures what the app would really send and show. Use it before changing a prompt or recommending a model. Show each step to the owner before building it, as always.
 
 ### Credit
 

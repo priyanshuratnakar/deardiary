@@ -30,7 +30,8 @@ struct EarlierLine: Equatable {
     let number: Int
     /// The day the entry was started, as yyyy-MM-dd.
     let date: String
-    /// What it was about: the name of the thought it belongs to.
+    /// What the line is, in a few words for the model: "about Meera", or "what they told
+    /// themselves, on a day they wrote about Meera".
     let label: String
     /// The writer's own words.
     let quote: String

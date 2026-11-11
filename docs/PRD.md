@@ -53,7 +53,7 @@ Off by default. Turning it on is how you say "I want to be heard now."
 
 A full-window view of your memory as a graph, in the spirit of Obsidian's graph view.
 
-- Nodes are thoughts: themes, feelings, people, ideas, questions, decisions, events. Size shows how often a thought recurs. Colour shows its kind.
+- Nodes are thoughts: people, topics, what helped, what is still open, and a feeling once you have named it in the same words on two days. Size shows how often a thought recurs. Colour shows its kind. (Until 12 November 2026 the kinds were themes, feelings, people, ideas, questions, decisions and events, named by the AI. A memory built then keeps them until it is rebuilt.)
 - Lines are relationships with a reason, for example "shows up whenever", "in tension with", "led to".
 - Click a node to read what the AI understands about it, how it has changed over time, and the exact lines from your entries behind it. Click a day to open that entry.
 - Click a line to read why the two thoughts are connected and which entries show it.
@@ -70,34 +70,42 @@ One small sheet: API key, model, AI on or off, "rebuild memory", "open memory fo
 
 ## Memory
 
-Memory is a folder of small markdown notes the AI writes about what you write. It is the single source for both talk mode and the map, and it is built to answer two questions: what keeps happening, and why.
+Memory is a folder of small notes built from what you write. It is the single source for both talk mode and the map.
+
+**Changed on 12 November 2026: memory keeps your words, not the AI's.** The first version asked the AI what keeps happening in your life and why, and let it name and describe things. That gave labels such as "Setting Boundaries" and "Health Anxiety": the AI's words, not yours, and sometimes a diagnosis nobody asked for. Now the AI only finds and copies, and the app does the rest:
+
+- **A thought is a lasting thing in your life**, and a dot on the map: a person, a topic, something you wrote had helped, something you said is still open, or a feeling once you have named it in the same words on two days.
+- **Everything else is kept on the day**, in your own words, with a small word for what it is: felt (pleasant, unpleasant or mixed), told yourself, happened, wanted.
+- **The AI writes nothing about you.** No description of a person, no notes on how something shifted, no profile in prose.
+- **What recurs is counted by the app** and said in fixed wording: "In 4 entries", "On 3 of those 4 days you also named an unpleasant feeling", "Open since Sunday 8 November". Never "because", "always" or "tends to".
+- **A line between two thoughts means one thing:** you wrote them in the same sentence, or you linked them by hand.
 
 ### What it stores
 
 | File | Holds |
 | --- | --- |
-| `memory/profile.md` | A short running picture of you: what is on your mind lately, patterns that hold over weeks, the people and projects that matter. Rewritten as things change. |
-| `memory/thoughts/<id>.md` | One note per thought. Kind, other names it goes by, first and last seen, a short "what this is", a dated timeline of how it has shifted, evidence (entry + exact quoted line), and links to other thoughts with a reason and evidence. |
-| `memory/entries/<entry-id>.json` | A digest of one entry: 2-3 sentence summary, thoughts it touched, open loops, and a hash of the text so unchanged entries are never reprocessed. |
+| `memory/profile.md` | A few counted lines written by the app: who and what you have written about most in the last month, how many things are still open, what you wrote had helped. |
+| `memory/thoughts/<id>.md` | One note per thought. Kind, other names it goes by, first and last seen, evidence (entry + exact quoted line), and links to other thoughts with the sentence they share. |
+| `memory/entries/<entry-id>.json` | A digest of one entry: your own lines from it, each with what it is, the thoughts it touched, and a hash of the text so unchanged entries are never reprocessed. |
 | `memory/graph.json` | The compiled graph and node positions for the map. Rebuilt from the thought notes. |
-| `memory/pins.json` | Your manual fixes: renames, merges, deletions, links. The AI reads this and must obey it. |
+| `memory/pins.json` | Your manual fixes: renames, merges, deletions, links, and open things you have closed. The AI must obey it. |
 
 Thought notes link to each other with `[[wikilinks]]`, so the memory folder also opens as an Obsidian vault.
 
 ### How it gets built
 
 1. **Trigger.** An entry is digested when it has settled: you start a new entry, the day changes, the app has been idle for 10 minutes, or you turn on talk or open the map. Never while you are typing.
-2. **Digest.** Claude gets the entry, the profile, and a compact index of existing thoughts (id, label, other names, one line each). It returns structured operations: update an existing thought, create a new one, add a link with a reason and a quoted line, add a timeline note, list open loops.
-3. **Apply.** The app validates the operations and writes the files. A quote that does not appear in the entry is rejected, so the AI cannot invent evidence. Pinned fixes win over anything the AI proposes.
-4. **Consolidate.** About once a week, or on request, a second pass merges duplicates, retires thoughts that appeared once and never returned, refreshes the profile, and looks for patterns across weeks that single entries cannot show.
+2. **Read.** The AI gets the entry and the names already in memory (people, topics, feelings in your words), so it uses a name that exists instead of making a second one. It returns a plain list of what is in the entry: people, topics, feelings, what happened, what you told yourself, what helped, what you want, what is still open. Every item carries a line copied from the entry.
+3. **Apply.** The app checks every line against the entry and keeps the entry's own text. A line that is not there is rejected, so the AI cannot invent evidence. The app, not the AI, decides what becomes a thought: something "helped" only if the entry itself puts it with a pleasant feeling you named; a feeling becomes a thought only when its words come up on a second day. Pinned fixes win over anything the AI proposes.
+4. **Tidy.** About once a week, or on request, a second pass folds together two thoughts that are the same thing under different names, and retires people and topics that came up once and never returned. It no longer looks for patterns or writes a profile.
 
 ### How it gets used
 
-Before each talk reply the app assembles context locally: the profile, today's entry, the thoughts whose names appear in the entry or your message plus their linked neighbours, and the quoted lines and summaries from the entries behind them. No vector database in v1; name and link matching over a personal journal is enough to start, and local embeddings can be added later without changing the files.
+Before each talk reply the app assembles context locally: the counted profile, today's entry, the thoughts whose names appear in the entry or your message plus their linked neighbours, and your own lines from the days behind them, including what you told yourself and felt on those days. No vector database in v1; name and link matching over a personal journal is enough to start, and local embeddings can be added later without changing the files.
 
 ### What "smart enough" means here
 
-The target is 100% AI-built with no manual work. Three things keep it from drifting: it must reuse an existing thought before creating a new one, every claim needs a quoted line, and the weekly pass cleans up. It will still get things wrong sometimes, which is why manual fixes exist and are permanent.
+The target is 100% built without manual work. Three things keep it from drifting: a name already in memory is reused before a new one is made, every item needs a quoted line, and the weekly pass cleans up. It will still get things wrong sometimes, which is why manual fixes exist and are permanent.
 
 ## Technical shape
 

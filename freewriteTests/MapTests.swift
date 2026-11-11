@@ -556,10 +556,13 @@ import Testing
         #expect(detail.firstSeen == "2026-11-02")
         #expect(detail.lastSeen == "2026-11-06")
         #expect(detail.shifts == [MapThoughtDetail.Shift(date: "2026-11-06", note: "Held back from agreeing for the first time.")])
+        // The most recent day first.
         #expect(detail.days == [
-            MapDayQuotes(entryID: MemoryWeek.monday.id, date: "2026-11-02", quotes: ["I said yes to everything she asked and then felt sick about it"]),
             MapDayQuotes(entryID: MemoryWeek.friday.id, date: "2026-11-06", quotes: ["First time I haven't just said yes."]),
+            MapDayQuotes(entryID: MemoryWeek.monday.id, date: "2026-11-02", quotes: ["I said yes to everything she asked and then felt sick about it"]),
         ])
+        // What the app can say by counting sits beside what the AI wrote before M14.
+        #expect(detail.counted == ["In 2 entries, from Monday 2 November to Friday 6 November 2026."])
         // Links are shown from both ends: one it makes, one made to it.
         #expect(detail.connections.map(\.label) == ["Meera", "Trouble sleeping"])
         #expect(detail.connections.map(\.reasons) == [["shows up around"], ["follows"]])

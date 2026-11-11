@@ -26,14 +26,14 @@ Measured with the app's own instructions and reply shape (fields in written orde
 | `gemma4:12b`, no settings sent (it thinks) | 0 of 18 | none | 0 | 37.5 |
 | `gemma4:12b`, thinking off, temperature 0 | 18 of 18 | 100% (67 of 67) | 17 | 5.6 |
 
-A draft of journal-shaped instructions (`scripts/model-check/memory-new.txt`: people, feelings in the writer's words, events, self-talk, what helped, what matters, open loops) did better again on both models:
+A draft of journal-shaped instructions (people, feelings in the writer's words, events, self-talk, what helped, what matters, open loops) did better again on both models:
 
 | Model | Quotes copied exactly | People found, of 17 | Items per entry | Seconds per entry |
 | --- | --- | --- | --- | --- |
 | `llama3.2` | 97% (116 of 120) | 14 | 6.7 | 1.4 |
 | `gemma4:12b` | 100% (104 of 104) | 17 | 5.8 | 3.0 |
 
-A revised draft (12 November, now in `memory-new.txt`) adds topics and "what helped", and hands the people, topics and feelings already found to the next entry, the way the app hands over what is in memory. On `gemma4:12b`: 18 of 18 readable, 110 of 110 quotes exact, 17 of 17 people, 3.3 seconds an entry. Names were reused across entries: lower-case "meera" joined Meera, "pricing" joined "the pricing page", and "so tired" joined "tired". It did not join "Slept badly" to "Couldn't sleep", and it found "what helped" only once (the run).
+A revised draft (12 November, since built into the app as its own instructions) adds topics and "what helped", and hands the people, topics and feelings already found to the next entry, the way the app hands over what is in memory. On `gemma4:12b`: 18 of 18 readable, 110 of 110 quotes exact, 17 of 17 people, 3.3 seconds an entry. Names were reused across entries: lower-case "meera" joined Meera, "pricing" joined "the pricing page", and "so tired" joined "tired". It did not join "Slept badly" to "Couldn't sleep", and it found "what helped" only once (the run).
 
 What `gemma4:12b` kept for four of the entries, with the app's instructions as they are:
 
@@ -89,7 +89,7 @@ The small model could not carry the draft: some replies were only an echo of a l
 - `qwen3.5:9b` was not downloaded or compared; only `gemma4:12b` was approved. It is the model to try if quote copying ever turns out weak.
 - No hosted model (Claude, OpenAI) was compared, because that needs the owner's keys. Those paths have still not been tried against the real services. The field-order fix applies to them too and is covered by tests only.
 - Existing memory was built by the small model. "Rebuild memory" in Settings reads every entry again with the new one.
-- Memory still uses the app's old instructions. Redesigning it is step 3. Talk was rebuilt on 12 November (step 2).
+- Talk was rebuilt on 12 November (step 2), and Memory the same day (step 3, part 1): see "After the Memory build" below.
 
 ## After the Talk build
 
@@ -113,6 +113,25 @@ One run through the real app code (the talk controller and the Ollama client, a 
 - To "no. i'm ok. just a dark thought at 3am": "I'm glad you're safe. 'just a dark thought at 3am' is a heavy thing to carry alone in the quiet."
 
 Weak spots that remain, all from the model: a reply now and then reads more into a short answer than is there ("lol i'm fine, just being dramatic" got "that is a very common way to brush off a moment that felt that heavy"); a question sometimes leans; after pointing at an earlier line it sometimes also retypes a few words of it (correctly, so far); and its second reply in a danger conversation varies, once "can you tell me more about".
+
+## After the Memory build
+
+The draft became the app's own instructions (M14). Measured on 12 November 2026 with `gemma4:12b`, 18 made-up entries.
+
+Through `compare.py memory-app`, which reads the app's instructions and reply shape: 18 of 18 readable, 111 of 111 quotes exact, 17 of 17 people, 3.7 seconds an entry.
+
+Through the app's own engine and Ollama client (a rebuild of all 18 entries, then the weekly tidy), 80 seconds in all:
+
+| | Result |
+| --- | --- |
+| Entries read | 18 of 18 |
+| Lines kept on days | 75, every one found in its entry |
+| Lines behind dots | 39, every one found in its entry |
+| Dots | 12 people, 12 topics, 1 feeling ("tired", named on two days), 1 thing that helped, 3 still open |
+| Refused by the app | 1 line that was not in the entry; 1 "what helped" the entry did not say helped |
+| The weekly tidy, in its new shape | read without error; "nothing needed changing" |
+
+Meera was found in all four of her entries (once written in lower case) and "pricing" joined "the pricing page".
 
 ## Running it again
 

@@ -4,10 +4,8 @@
 #   python3 scripts/model-check/compare.py <model> <what>
 #
 #   what:
-#     memory-app          the app's own memory instructions, thinking off, temperature 0
+#     memory-app          the app's own way of reading an entry, thinking off, temperature 0
 #     memory-app-default  the same, with no settings sent (how the app behaved before 12 Nov 2026)
-#     memory-new          a draft of journal-shaped memory instructions (memory-new.txt), with the
-#                         names already found handed on from one entry to the next
 #     talk-app            the app's own talk, on the 18 entries
 #     talk-hard-app       the app's own talk on the harder cases: an earlier day, closing,
 #                         medical, "are you a therapist", danger, a figure of speech
@@ -62,42 +60,11 @@ def in_entry(quote, entry):
 
 # ---------------------------------------------------------------- Memory
 def memory_app(default_settings):
+    """Reads each entry the way the app does: the app's own instructions and reply shape, and
+    the people, topics and feelings already found handed to the next entry, as the app hands
+    over what is in memory."""
     system = swift_text(PROMPTS, "digestSystem")
     schema = json.loads(swift_text(PROJECT + "/freewrite/Memory/DigestResult.swift", "json"))
-    rows = []
-    for e in ENTRIES:
-        message = "Profile so far:\n(none yet)\n\nThoughts already in memory (id | label | kind | other names | what it is):\n(none yet)\n\nEntry started on %s:\n<entry>\n%s\n</entry>" % (e["day"], e["text"])
-        r = chat(system, [{"role": "user", "content": message}], schema=schema,
-                 temperature=None if default_settings else 0, think=None if default_settings else False)
-        row = {"id": e["id"], "seconds": r["seconds"], "ok": False, "items": 0, "quotes": 0, "exact": 0, "people": 0, "speed": r.get("speed", 0), "labels": ""}
-        try:
-            data = json.loads(r["text"])
-            thoughts = data["new_thoughts"]; _ = data["summary"], data["thought_updates"], data["links"], data["timeline_notes"], data["open_loops"]
-            row["ok"] = True
-            quotes = [t["quote"] for t in thoughts] + [l["quote"] for l in data["links"]] + [n["quote"] for n in data["timeline_notes"]]
-            row["items"], row["quotes"], row["exact"] = len(thoughts), len(quotes), sum(in_entry(q, e["text"]) for q in quotes)
-            labels = " ".join(norm(t["label"]) + " " + " ".join(norm(a) for a in t.get("aliases", [])) for t in thoughts)
-            row["people"] = sum(norm(p).replace("dr. ", "") in labels for p in e["people"])
-            row["labels"] = "; ".join("%s [%s]" % (t["label"], t["kind"]) for t in thoughts)
-        except Exception as error:
-            row["labels"] = "UNREADABLE: " + (r.get("error") or str(error))[:80] + " | " + (r.get("text") or "")[:80].replace("\n", " ")
-        rows.append(row)
-        print("%-9s %5.1fs %s" % (e["id"], row["seconds"], row["labels"][:230]), flush=True)
-    return rows
-
-def memory_new():
-    """The draft for step 3: list what is in an entry, in the writer's own words. The entries are
-    read in order, and the people, topics and feelings already found are handed to the next one,
-    the way the app hands over what is in memory."""
-    item = lambda fields: {"type": "array", "items": {"type": "object", "additionalProperties": False, "required": list(fields), "properties": fields}}
-    t = {"type": "string"}
-    schema = {"type": "object", "additionalProperties": False,
-              "required": ["people", "topics", "feelings", "happened", "self_talk", "helped", "matters", "open_loops"],
-              "properties": {"people": item({"name": t, "quote": t}), "topics": item({"name": t, "quote": t}),
-                             "feelings": item({"word": t, "tone": {"type": "string", "enum": ["pleasant", "unpleasant", "mixed"]}, "quote": t}),
-                             "happened": item({"what": t, "quote": t}), "self_talk": item({"quote": t}), "helped": item({"what": t, "quote": t}),
-                             "matters": item({"what": t, "quote": t}), "open_loops": item({"what": t, "quote": t})}}
-    system = open(sys.path[0] + "/memory-new.txt", encoding="utf-8").read()
     key = lambda name: re.sub(r"^(the|a|an|my) ", "", norm(name))
     people, topics, feelings = {}, {}, {}
     rows = []
@@ -106,7 +73,7 @@ def memory_new():
             ", ".join(people.values()) or "(none yet)", ", ".join(topics.values()) or "(none yet)",
             ", ".join("%s (%s)" % f for f in feelings.values()) or "(none yet)")
         r = chat(system, [{"role": "user", "content": known + "\n\nEntry written on %s:\n<entry>\n%s\n</entry>" % (e["day"], e["text"])}],
-                 schema=schema, temperature=0, think=False)
+                 schema=schema, temperature=None if default_settings else 0, think=None if default_settings else False)
         row = {"id": e["id"], "seconds": r["seconds"], "ok": False, "items": 0, "quotes": 0, "exact": 0, "people": 0, "speed": r.get("speed", 0), "labels": ""}
         try:
             data = json.loads(r["text"])
@@ -130,7 +97,7 @@ def memory_new():
                 "O: " + "; ".join(x["what"] for x in data["open_loops"]) if data["open_loops"] else "",
                 "AGAIN: " + ", ".join(again) if again else ""]))
         except Exception as error:
-            row["labels"] = "UNREADABLE: " + (r.get("error") or str(error))[:80]
+            row["labels"] = "UNREADABLE: " + (r.get("error") or str(error))[:80] + " | " + (r.get("text") or "")[:80].replace("\n", " ")
         rows.append(row)
         print("%-9s %5.1fs %s" % (e["id"], row["seconds"], row["labels"][:420]), flush=True)
     print("KEPT %s %s: people %d (%s) | topics %d (%s)" % (MODEL, WHAT, len(people), ", ".join(people.values()), len(topics), ", ".join(topics.values())))
@@ -268,7 +235,6 @@ def talk(cases):
 TALK_ENTRIES = [e for e in ENTRIES if "next" in e or e["id"] == "distress"]
 if WHAT == "memory-app": memory_summary(memory_app(False))
 elif WHAT == "memory-app-default": memory_summary(memory_app(True))
-elif WHAT == "memory-new": memory_summary(memory_new())
 elif WHAT == "talk-app": talk(TALK_ENTRIES)
 elif WHAT == "talk-hard-app": talk(TALK_CASES)
 else: sys.exit("unknown: " + WHAT)

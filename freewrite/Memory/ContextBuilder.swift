@@ -22,6 +22,9 @@ struct TalkMemoryContext: Equatable {
         /// The day the entry was started, as yyyy-MM-dd.
         let date: String
         let text: String
+        /// What the line is, when it is not a line about the thought itself: something the
+        /// writer felt, told themselves or wanted on a day they wrote about it.
+        var about: String? = nil
     }
 
     /// A note on how a thought shifted.
@@ -152,10 +155,14 @@ enum ContextBuilder {
         // Neighbours go first, then the day summaries, and the named thoughts last.
         var chosen = Array(named) + Array(neighbours)
         var includeDays = true
+        var dayLines: [UUID: [DayLine]] = [:]
+        for digest in digests where !digest.failed {
+            dayLines[digest.entryID] = digest.lines ?? []
+        }
         while true {
             let included = Set(chosen.map(\.id))
             let labels = Dictionary(uniqueKeysWithValues: chosen.map { ($0.id, $0.label) })
-            context.thoughts = chosen.map { item(for: $0, openEntry: entry.id, included: included, labels: labels, limits: limits) }
+            context.thoughts = chosen.map { item(for: $0, openEntry: entry.id, included: included, labels: labels, dayLines: dayLines, limits: limits) }
             context.days = includeDays
                 ? daySummaries(for: context.thoughts, chosen: chosen, openEntry: entry.id, digests: digests, limits: limits)
                 : []
@@ -203,13 +210,60 @@ enum ContextBuilder {
         openEntry: UUID,
         included: Set<String>,
         labels: [String: String],
+        dayLines: [UUID: [DayLine]],
         limits: Limits
     ) -> TalkMemoryContext.Item {
-        let quotes = thought.evidence
-            .filter { $0.entryID != openEntry }
-            .sorted { ($0.date, $0.quote) < ($1.date, $1.quote) }
-            .suffix(limits.quotesPerThought)
-            .map { TalkMemoryContext.Quote(date: $0.date, text: $0.quote) }
+        // The lines about the thought itself, and what the writer told themselves, wanted
+        // and felt on the days they wrote about it. Those are often the lines worth
+        // bringing up: "First time I haven't just said yes."
+        struct Candidate {
+            let date: String
+            let text: String
+            let about: String?
+            /// What to prefer within a day: the higher, the better.
+            let rank: Int
+        }
+        var candidates: [Candidate] = []
+        var seen: Set<String> = []
+        let earlier = thought.evidence.filter { $0.entryID != openEntry }
+        for item in earlier where seen.insert(item.date + "\n" + item.quote).inserted {
+            // A line about the thought that is also something they told themselves or
+            // wanted is as telling as any.
+            let telling = (dayLines[item.entryID] ?? []).contains { $0.quote == item.quote && ($0.kind == .toldYourself || $0.kind == .wanted) }
+            candidates.append(Candidate(date: item.date, text: item.quote, about: nil, rank: telling ? 3 : 0))
+        }
+        for entryID in Set(earlier.map(\.entryID)) {
+            guard let date = earlier.first(where: { $0.entryID == entryID })?.date else { continue }
+            for line in dayLines[entryID] ?? [] {
+                let about: String
+                let rank: Int
+                switch line.kind {
+                case .toldYourself: (about, rank) = ("what they told themselves, on a day they wrote about \(thought.label)", 3)
+                case .wanted: (about, rank) = ("what they wanted, on a day they wrote about \(thought.label)", 2)
+                case .felt: (about, rank) = ("how they felt, on a day they wrote about \(thought.label)", 1)
+                default: continue
+                }
+                guard seen.insert(date + "\n" + line.quote).inserted else { continue }
+                candidates.append(Candidate(date: date, text: line.quote, about: about, rank: rank))
+            }
+        }
+        // The best line of each day first, the most recent days first, so one day's lines
+        // do not crowd out the others; then whatever else there is room for. They are
+        // listed oldest first, so the most recent day's best line is the last one.
+        let ordered = candidates.sorted { ($0.date, $0.rank, $0.text) > ($1.date, $1.rank, $1.text) }
+        var picked: [Candidate] = []
+        var daysTaken: Set<String> = []
+        for candidate in ordered where picked.count < limits.quotesPerThought && daysTaken.insert(candidate.date).inserted {
+            picked.append(candidate)
+        }
+        for candidate in ordered where picked.count < limits.quotesPerThought {
+            if !picked.contains(where: { $0.date == candidate.date && $0.text == candidate.text }) {
+                picked.append(candidate)
+            }
+        }
+        let quotes = picked
+            .sorted { ($0.date, $0.rank, $0.text) < ($1.date, $1.rank, $1.text) }
+            .map { TalkMemoryContext.Quote(date: $0.date, text: $0.text, about: $0.about) }
 
         let shifts = thought.timeline
             .filter { $0.entryID != openEntry }

@@ -73,43 +73,41 @@ import Testing
     @Test func readsAFullReply() throws {
         let result = try DigestParser.parse(MemoryWeek.fridayReply)
 
-        #expect(result.summary.hasPrefix("Meera asked for more"))
-        #expect(result.thoughtUpdates.map(\.thoughtID) == ["meera", "trouble-sleeping"])
-        #expect(result.thoughtUpdates[0].newSummary == nil)
-        #expect(result.newThoughts.map(\.label) == ["Saying yes", "The pricing page"])
-        #expect(result.newThoughts[1].kind == .decision)
-        #expect(result.newThoughts[0].aliases == ["Saying yes under pressure"])
-        #expect(result.links.count == 1)
-        #expect(result.links[0].reason == "asked for by")
-        #expect(result.timelineNotes.count == 2)
-        #expect(result.openLoops.isEmpty)
-        #expect(result.profile == nil)
+        #expect(result.people == [DigestResult.Named(name: "Meera", quote: "Meera asked if I could also take the pricing page.")])
+        #expect(result.topics.map(\.name) == ["the pricing page"])
+        #expect(result.feelings == [
+            DigestResult.Feeling(word: "stomach drop", tone: .unpleasant, quote: "Still felt my stomach drop"),
+            DigestResult.Feeling(word: "slept fine", tone: .pleasant, quote: "but I slept fine."),
+        ])
+        #expect(result.happened.map(\.what) == ["Meera asked about the pricing page"])
+        #expect(result.selfTalk == ["First time I haven't just said yes."])
+        #expect(result.helped.isEmpty)
+        #expect(result.matters.isEmpty)
+        #expect(result.openLoops == [DigestResult.Noted(what: "think about it", quote: "I said I needed to think about it.")])
     }
 
     @Test func readsAnEmptyButValidReply() throws {
-        let result = try DigestParser.parse(DigestJSON.reply(summary: "Nothing much."))
-
-        #expect(result == DigestResult(summary: "Nothing much."))
+        #expect(try DigestParser.parse(DigestJSON.reply()) == DigestResult())
     }
 
     @Test func acceptsJSONInsideACodeFence() throws {
-        let fenced = "```json\n" + DigestJSON.reply(summary: "Fenced.") + "\n```"
+        let fenced = "```json\n" + DigestJSON.reply(selfTalk: ["Fenced."]) + "\n```"
 
-        #expect(try DigestParser.parse(fenced).summary == "Fenced.")
+        #expect(try DigestParser.parse(fenced).selfTalk == ["Fenced."])
     }
 
-    @Test func acceptsAKindInAnyCapitalisation() throws {
-        let reply = DigestJSON.reply(new: [DigestJSON.new("Meera", kind: "Person", summary: "A colleague.", quote: "a quote")])
+    @Test func acceptsAToneInAnyCapitalisation() throws {
+        let reply = DigestJSON.reply(feelings: [DigestJSON.felt("tired", " Unpleasant ", "a quote")])
 
-        #expect(try DigestParser.parse(reply).newThoughts.first?.kind == .person)
+        #expect(try DigestParser.parse(reply).feelings.first?.tone == .unpleasant)
     }
 
     @Test(arguments: [
         "not json at all",
         "",
         "[]",
-        "Here is the JSON you asked for: {\"summary\": \"x\"}",
-        "{\"summary\": \"only one field\"}",
+        "Here is the JSON you asked for: {\"people\": []}",
+        "{\"people\": []}",
     ])
     func refusesAnythingThatIsNotTheExpectedObject(reply: String) {
         #expect(throws: DigestParseError.self) {
@@ -118,31 +116,37 @@ import Testing
     }
 
     @Test func refusesAnExtraField() {
-        let reply = DigestJSON.reply().replacingOccurrences(of: "{\"links\"", with: "{\"mood\":\"low\",\"links\"")
+        let reply = DigestJSON.reply().replacingOccurrences(of: "{\"feelings\"", with: "{\"mood\":\"low\",\"feelings\"")
 
+        #expect(reply.contains("\"mood\""))
         #expect(throws: DigestParseError.self) {
             _ = try DigestParser.parse(reply)
         }
     }
 
     @Test func refusesAnItemWithAMissingOrExtraField() {
-        let missing = DigestJSON.reply(links: [["from": "a", "to": "b", "reason": "because"]])
-        let extra = DigestJSON.reply(notes: [["thought": "a", "note": "n", "quote": "q", "confidence": "high"]])
+        let missing = DigestJSON.reply(people: [["name": "Meera"]])
+        let extra = DigestJSON.reply(happened: [["what": "a call", "quote": "q", "confidence": "high"]])
+        // The AI is not asked for a summary, a description or a diagnosis, and may not add one.
+        let described = DigestJSON.reply(people: [["name": "Meera", "quote": "q", "summary": "Hard to refuse."]])
 
         #expect(throws: DigestParseError.self) { _ = try DigestParser.parse(missing) }
         #expect(throws: DigestParseError.self) { _ = try DigestParser.parse(extra) }
+        #expect(throws: DigestParseError.self) { _ = try DigestParser.parse(described) }
     }
 
     @Test func refusesTheWrongTypeOfValue() {
-        let numberForText = DigestJSON.reply(updates: [["thought_id": 7, "quote": "q", "new_summary": NSNull(), "new_alias": NSNull()]])
+        let numberForText = DigestJSON.reply(topics: [["name": 7, "quote": "q"]])
         let textForList = DigestJSON.reply().replacingOccurrences(of: "\"open_loops\":[]", with: "\"open_loops\":\"none\"")
+        let textForItem = DigestJSON.reply().replacingOccurrences(of: "\"self_talk\":[]", with: "\"self_talk\":[\"just a line\"]")
 
         #expect(throws: DigestParseError.self) { _ = try DigestParser.parse(numberForText) }
         #expect(throws: DigestParseError.self) { _ = try DigestParser.parse(textForList) }
+        #expect(throws: DigestParseError.self) { _ = try DigestParser.parse(textForItem) }
     }
 
-    @Test func refusesAKindThatIsNotOneOfTheSeven() {
-        let reply = DigestJSON.reply(new: [DigestJSON.new("Mood", kind: "diagnosis", summary: "s", quote: "q")])
+    @Test func refusesAToneThatIsNotOneOfTheThree() {
+        let reply = DigestJSON.reply(feelings: [DigestJSON.felt("low", "depressed", "q")])
 
         #expect(throws: DigestParseError.self) { _ = try DigestParser.parse(reply) }
     }
@@ -158,16 +162,44 @@ import Testing
         }
     }
 
-    // MARK: - The schema sent to Claude must describe the same shape
+    // MARK: - The schema sent to the model must describe the same shape
 
     @Test func theSchemaMatchesWhatTheParserExpects() throws {
         let schema = try #require(try JSONSerialization.jsonObject(with: DigestSchema.data) as? [String: Any])
         let properties = try #require(schema["properties"] as? [String: Any])
 
-        #expect(Set(properties.keys) == ["summary", "thought_updates", "new_thoughts", "links", "timeline_notes", "open_loops", "profile"])
+        #expect(Set(properties.keys) == ["people", "topics", "feelings", "happened", "self_talk", "helped", "matters", "open_loops"])
 
-        let kinds = try #require((((properties["new_thoughts"] as? [String: Any])?["items"] as? [String: Any])?["properties"] as? [String: Any])?["kind"] as? [String: Any])
-        #expect(Set(kinds["enum"] as? [String] ?? []) == Set(ThoughtKind.allCases.map(\.rawValue)))
+        func fields(_ key: String) -> Set<String> {
+            Set((((properties[key] as? [String: Any])?["items"] as? [String: Any])?["properties"] as? [String: Any] ?? [:]).keys)
+        }
+        #expect(fields("people") == ["name", "quote"])
+        #expect(fields("topics") == ["name", "quote"])
+        #expect(fields("feelings") == ["word", "tone", "quote"])
+        #expect(fields("self_talk") == ["quote"])
+        for key in ["happened", "helped", "matters", "open_loops"] {
+            #expect(fields(key) == ["what", "quote"])
+        }
+
+        let tone = try #require((((properties["feelings"] as? [String: Any])?["items"] as? [String: Any])?["properties"] as? [String: Any])?["tone"] as? [String: Any])
+        #expect(tone["enum"] as? [String] == ["pleasant", "unpleasant", "mixed"])
+    }
+
+    @Test func aReplyThatFitsTheSchemaIsReadByTheParser() throws {
+        // Every scripted reply for the made-up week is in the shape the schema asks for.
+        for reply in MemoryWeek.replies {
+            _ = try DigestParser.parse(reply)
+        }
+    }
+
+    @Test func theShapeIsWrittenInTheOrderItIsBestFilledIn() {
+        // A model writes its reply in the order the shape lists its fields (rule 11 of M8):
+        // who and what first, then what was felt, and what helped only after the feelings.
+        let order = ["\"people\": {", "\"topics\": {", "\"feelings\": {", "\"happened\": {", "\"self_talk\": {", "\"helped\": {", "\"matters\": {", "\"open_loops\": {"]
+        let places = order.compactMap { DigestSchema.json.range(of: $0)?.lowerBound }
+
+        #expect(places.count == order.count)
+        #expect(places == places.sorted())
     }
 
     @Test func everyObjectInTheSchemaListsAllItsFieldsAndAllowsNoOthers() throws {
@@ -188,8 +220,8 @@ import Testing
         }
         check(schema)
 
-        // The reply itself plus the four kinds of item.
-        #expect(objectsChecked == 5)
+        // The reply itself plus the eight kinds of item.
+        #expect(objectsChecked == 9)
     }
 }
 

@@ -37,6 +37,13 @@ struct GraphNode: Equatable, Identifiable {
 
     var isDay: Bool { entryID != nil }
 
+    /// The name as it is drawn on the map. A long one is cut short there (something still
+    /// open is named by the writer's own line); the panel shows it whole.
+    var mapLabel: String {
+        guard !isDay, label.count > 34 else { return label }
+        return String(label.prefix(32)).trimmingCharacters(in: .whitespaces) + "…"
+    }
+
     static func dayID(_ entryID: UUID) -> String {
         "day:\(entryID.uuidString)"
     }
@@ -88,9 +95,12 @@ struct MemoryGraph: Equatable {
 
 enum GraphBuilder {
     /// Builds the graph from the thought notes.
-    /// - Parameter saved: positions remembered from last time, by thought id.
+    /// - Parameters:
+    ///   - saved: positions remembered from last time, by thought id.
+    ///   - otherDays: entries that have lines kept on their day, with their dates. One that
+    ///     touched no thought is still a day on the map, on its own, so its lines can be read.
     /// - Returns: the graph, and the thoughts that have no remembered position yet.
-    static func build(from memory: MemorySnapshot, saved: [String: CGPoint]) -> (graph: MemoryGraph, unplaced: Set<String>) {
+    static func build(from memory: MemorySnapshot, saved: [String: CGPoint], otherDays: [UUID: String] = [:]) -> (graph: MemoryGraph, unplaced: Set<String>) {
         var unplaced: Set<String> = []
 
         var nodes = memory.thoughts.values
@@ -158,6 +168,9 @@ enum GraphBuilder {
                 day.thoughts.insert(thought.id)
                 touchedBy[item.entryID] = day
             }
+        }
+        for (entryID, date) in otherDays where touchedBy[entryID] == nil {
+            touchedBy[entryID] = (date, [])
         }
         for (entryID, day) in touchedBy.sorted(by: { ($0.value.date, $0.key.uuidString) < ($1.value.date, $1.key.uuidString) }) {
             let id = GraphNode.dayID(entryID)
@@ -271,10 +284,17 @@ enum MapPalette {
         Color(hex: isLight ? light[kind] ?? 0x808080 : dark[kind] ?? 0x808080)
     }
 
+    // The five kinds memory keeps since M14 use five of the seven tested colours. A kind
+    // from before M14 keeps the colour it had, so an older memory looks as it did until
+    // it is rebuilt: a topic shares the old theme's blue, what helped the old event's
+    // purple, and what is still open the old question's pink.
     private static let light: [ThoughtKind: UInt32] = [
-        .theme: 0x2A78D6,
-        .feeling: 0xEB6834,
         .person: 0x1BAF7A,
+        .topic: 0x2A78D6,
+        .feeling: 0xEB6834,
+        .helped: 0x6250D6,
+        .open: 0xE87BA4,
+        .theme: 0x2A78D6,
         .idea: 0xEDA100,
         .question: 0xE87BA4,
         .decision: 0x008300,
@@ -282,9 +302,12 @@ enum MapPalette {
     ]
 
     private static let dark: [ThoughtKind: UInt32] = [
-        .theme: 0x3987E5,
-        .feeling: 0xD95926,
         .person: 0x199E70,
+        .topic: 0x3987E5,
+        .feeling: 0xD95926,
+        .helped: 0x9085E9,
+        .open: 0xD55181,
+        .theme: 0x3987E5,
         .idea: 0xC98500,
         .question: 0xD55181,
         .decision: 0x008300,

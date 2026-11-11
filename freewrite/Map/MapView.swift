@@ -326,7 +326,7 @@ struct MapScreen: View {
         if let hovered = model.hoveredThought,
            let node = graph.nodes.first(where: { $0.id == hovered }),
            let centre = positions[hovered] {
-            let text = Text(node.kind?.rawValue ?? "day")
+            let text = Text(node.kind?.name ?? "day")
                 .font(.system(size: 10))
                 .foregroundColor(style.quietColor)
             context.draw(context.resolve(text), at: CGPoint(x: centre.x, y: centre.y - model.screenRadius(node) - 6), anchor: .bottom)
@@ -417,7 +417,7 @@ struct MapScreen: View {
                     Circle()
                         .fill(style.color(for: kind))
                         .frame(width: 8, height: 8)
-                    Text(kind.rawValue.capitalized)
+                    Text(kind.name.prefix(1).uppercased() + kind.name.dropFirst())
                         .font(.system(size: 13))
                         .foregroundColor(model.highlightedKind == kind ? style.strongColor : style.quietColor)
                 }

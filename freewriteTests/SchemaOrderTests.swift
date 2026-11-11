@@ -111,22 +111,30 @@ import Testing
 
     // MARK: - The order that is written is the order that makes sense
 
-    @Test func aThoughtIsNamedBeforeItIsDescribed() throws {
+    @Test func aThingIsNamedBeforeItIsQuoted() throws {
         let digest = try #require(String(data: DigestSchema.data, encoding: .utf8))
         func position(_ field: String, after start: String.Index? = nil) -> String.Index? {
             digest.range(of: "\"\(field)\": {", range: (start ?? digest.startIndex)..<digest.endIndex)?.lowerBound
         }
 
-        // What the entry is about comes first; the profile, which rests on everything else, last.
-        let summary = try #require(position("summary"))
-        let newThoughts = try #require(position("new_thoughts"))
-        let profile = try #require(position("profile"))
-        #expect(summary < newThoughts)
-        #expect(newThoughts < profile)
+        // Who and what the entry is about come first; what helped comes after the feelings
+        // it rests on; what is still open, last.
+        let people = try #require(position("people"))
+        let feelings = try #require(position("feelings"))
+        let helped = try #require(position("helped"))
+        let openLoops = try #require(position("open_loops"))
+        #expect(people < feelings)
+        #expect(feelings < helped)
+        #expect(helped < openLoops)
 
-        // Inside a new thought: its name, then its kind.
-        let label = try #require(position("label", after: newThoughts))
-        let kind = try #require(position("kind", after: newThoughts))
-        #expect(label < kind)
+        // Inside a person: the name, then the line. Inside a feeling: the word, its tone, then the line.
+        let name = try #require(position("name", after: people))
+        let quote = try #require(position("quote", after: people))
+        #expect(name < quote)
+        let word = try #require(position("word", after: feelings))
+        let tone = try #require(position("tone", after: feelings))
+        let feelingQuote = try #require(position("quote", after: feelings))
+        #expect(word < tone)
+        #expect(tone < feelingQuote)
     }
 }

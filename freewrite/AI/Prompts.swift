@@ -98,7 +98,7 @@ enum Prompts {
     /// itself it changed a few words of one, and a diary must not misquote its writer.
     static let talkKnowsMemory = """
     Lines from earlier entries
-    - Below you are given numbered lines they wrote on earlier days, each with its day and what it was about. You may also be given a short profile: it is background, never recite it.
+    - Below you are given numbered lines they wrote on earlier days, each with its day and what it is: a line about a person or topic, or something they felt, told themselves or wanted on a day they wrote about it. You may also be given a few counted lines as a profile: they are background, never recite them.
     - In your first reply, look for a line that is about the same thing as today's entry. If there is one, use it to show that something has changed, or that it has come round again.
     - To use a line, write its number in curly brackets where the line should go, like {2}. The journal puts the day and their exact words there. Never type out an earlier line yourself, and never state the day yourself.
     - For example: {2} Today it's "I asked him". What happened in between?
@@ -227,10 +227,19 @@ enum Prompts {
             .map { number, place in
                 let thought = memory.thoughts[place.thought]
                 let quote = thought.quotes[place.quote]
+                // What the line is, in a few words for the model: a line about the thought,
+                // or something they felt, told themselves or wanted on a day they wrote about it.
+                let about: String
+                switch thought.kind {
+                case .feeling: about = "a day they named feeling \(thought.label)"
+                case .open: about = "something they said was still open"
+                case .helped: about = "something they wrote had helped (\(thought.label))"
+                default: about = "about \(thought.label)"
+                }
                 return EarlierLine(
                     number: number + 1,
                     date: quote.date,
-                    label: thought.label,
+                    label: quote.about ?? about,
                     quote: MemoryText.singleLine(quote.text)
                 )
             }
@@ -247,7 +256,7 @@ enum Prompts {
         }
 
         for line in earlierLines(from: memory) {
-            lines.append("{\(line.number)} \(longDay(line.date)), about \(line.label): \"\(line.quote)\"")
+            lines.append("{\(line.number)} \(longDay(line.date)), \(line.label): \"\(line.quote)\"")
         }
 
         if lines.last == "" {
@@ -287,167 +296,102 @@ enum Prompts {
         "\(kind.serviceName) declined to respond to this. If you are in danger or thinking about harming yourself, please reach someone you trust, Tele-MANAS on 14416 (India), or your local emergency services."
     }
 
-    // MARK: - Memory: digesting one entry
+    // MARK: - Memory: reading one entry
 
-    /// How the AI reads one entry and proposes what to remember. The app checks
-    /// every item afterwards (see MemoryApplier), so nothing here is taken on trust.
+    /// How the AI reads one entry: it lists what is in it, each item with a line copied
+    /// from the entry. It names nothing and explains nothing. The app checks every item
+    /// afterwards and decides what becomes a thought (see MemoryApplier), so nothing here
+    /// is taken on trust.
+    ///
+    /// Rewritten for M14 (see docs/research/ai-layer.md). The first version asked for
+    /// "what keeps happening in their life and why", with labels, descriptions and a
+    /// profile, and got names such as "Health Anxiety" in the model's words. This one asks
+    /// a small model to do what it does well: find and copy.
     static let digestSystem = """
-    You build a private memory for one person from their journal. You are reading one entry. Your job is to note what it shows about what keeps happening in their life and why, using only their own words as evidence.
+    You are reading one entry from a private journal. List what is in it, using only the writer's own words as proof. Reply with JSON only.
 
-    You are given their profile so far, an index of the thoughts already in memory, and the entry. Reply with JSON in the required shape and nothing else.
+    Find
+    - people: every person named, or referred to by a family word (Ma, Papa, Nani) or a role (my boss). name is how the writer refers to them. If the person is already in memory, use that exact name.
+    - topics: things the entry is about that could come up again: a project, a task, a place, a habit, an object (the launch, the pricing page, running, the novel, rent). name is two or three plain words, taken from the entry. If the topic is already in memory, use that exact name. Not feelings, not people, and not everyday things such as making tea, a meal or a show they watched.
+    - feelings: feelings or body states the writer names about themselves, such as "felt sick", "couldn't sleep", "head was quiet", "felt nothing". word is their own word or short phrase. tone is pleasant, unpleasant or mixed. Not what someone else said about them. If it is the same feeling as one already in memory, use that exact word; if it is different, or the opposite, use their new words.
+    - happened: things that happened or that they did. what is a short plain phrase.
+    - self_talk: what they tell themselves, realise or admit about themselves ("First time I haven't just said yes.", "I think I'm the one who always makes the plan."). Not plain events.
+    - helped: something they did or that happened, after which they say they felt better or things went better ("my head was quiet afterwards" after a run: what is "a run before work"). what is the thing that helped, in a few plain words. Only when the entry itself puts the two together.
+    - matters: what they say they want, do not want, or have decided.
+    - open_loops: things they say they still need to do or decide, with any deadline they give. what names who or what it is about ("tell Meera about the pricing page by Tuesday", not "tell her").
 
-    What a thought is
-    - A thought is something that recurs or matters to them: a theme, a feeling, a person, an idea, a question, a decision or an event.
-    - Give each a short plain label of two to five words that they would recognise, in their own vocabulary.
+    Rules
+    - quote: copy the words exactly from the entry, one sentence or less, in the language they wrote it in. If you cannot quote it, leave the item out.
+    - Do not add feelings they did not name. Do not add causes they did not state. Do not judge anyone.
+    - Empty lists are fine. An entry where nothing much happened has nearly empty lists.
 
-    Reuse before you create
-    - Before creating anything, read the whole index. If an existing thought covers it, even under a different name, put it in thought_updates with that thought's id. If they used another name for it, give that name in new_alias.
-    - Create a new thought only when nothing in the index fits. When unsure, reuse.
-    - A person is one thought, however they are referred to.
-    - Do not create a thought for something mentioned in passing. Most entries touch two to five thoughts.
-
-    Evidence
-    - Every item needs a quote copied exactly from this entry: the same words, spelling and punctuation. No paraphrase, no "...", no joining two separate passages. One sentence or less.
-    - If you cannot quote it, leave the item out. Never invent or adjust a quote.
-
-    Links
-    - Link two thoughts only when this entry shows how they relate. Give the reason in a few plain words, such as "shows up whenever", "in tension with", "led to" or "eases".
-    - Refer to a thought by its id from the index, or by the exact label of a thought you are creating in this reply.
-
-    Timeline notes
-    - Add a note when this entry shows a thought shifting: starting, easing, getting worse, being decided. One short sentence in the past tense about what changed.
-
-    Open loops
-    - List what they said they need to do, decide or come back to, briefly and in their words.
-
-    Profile
-    - The profile is a short running picture of them: what is on their mind lately, patterns that have held over weeks, and the people and projects that matter. At most 150 words of plain prose, written about them as "they".
-    - Return the whole profile rewritten only if this entry changes the picture. Otherwise return null.
-    - Put nothing in the profile that the thoughts and this entry do not support.
-
-    Tone
-    - Describe, do not judge. Do not diagnose or label them or anyone else with a condition. Prefer their words to clinical ones.
-
-    The reply is one JSON object with exactly these fields:
-    - summary: two or three sentences on what this entry is about.
-    - thought_updates: a list of {thought_id, quote, new_summary, new_alias}. new_summary and new_alias may be null.
-    - new_thoughts: a list of {label, kind, summary, aliases, quote}. kind is one of theme, feeling, person, idea, question, decision, event.
-    - links: a list of {from, to, reason, quote}.
-    - timeline_notes: a list of {thought, note, quote}.
-    - open_loops: a list of short strings.
-    - profile: the rewritten profile, or null.
-    Lists may be empty.
+    Example
+    Entry: "Lunch with Kavya. She thinks I should apply for the Pune job. I laughed it off but I've been thinking about it all evening. Felt lighter after the walk back. Must update my CV this week."
+    {"people":[{"name":"Kavya","quote":"Lunch with Kavya."}],"topics":[{"name":"the Pune job","quote":"She thinks I should apply for the Pune job."}],"feelings":[{"word":"lighter","tone":"pleasant","quote":"Felt lighter after the walk back."}],"happened":[{"what":"lunch with Kavya","quote":"Lunch with Kavya."},{"what":"laughed off the Pune job idea","quote":"I laughed it off"}],"self_talk":[{"quote":"I've been thinking about it all evening"}],"helped":[{"what":"the walk back","quote":"Felt lighter after the walk back."}],"matters":[],"open_loops":[{"what":"update my CV this week","quote":"Must update my CV this week."}]}
     """
 
-    /// The material for one digest: the profile, the index of thoughts, and the entry.
-    static func digestMessage(profile: String, thoughts: [Thought], entryDate: Date, entryText: String) -> String {
-        let profileText = profile.trimmingCharacters(in: .whitespacesAndNewlines)
-        let index = thoughts
-            .sorted { $0.id < $1.id }
-            .map(digestIndexLine)
-            .joined(separator: "\n")
-
+    /// The material for one reading: the names already in memory, and the entry.
+    static func digestMessage(index: MemoryIndex, entryDate: Date, entryText: String) -> String {
+        func list(_ names: [String]) -> String {
+            names.isEmpty ? "(none yet)" : names.joined(separator: ", ")
+        }
         return """
-        Profile so far:
-        \(profileText.isEmpty ? "(none yet)" : profileText)
+        People already in memory: \(list(index.people))
+        Topics already in memory: \(list(index.topics))
+        Feelings already in memory: \(list(index.feelings))
 
-        Thoughts already in memory (id | label | kind | other names | what it is):
-        \(index.isEmpty ? "(none yet)" : index)
-
-        Entry started on \(longDay(entryDate)):
+        Entry written on \(longDay(entryDate)):
         <entry>
         \(entryText.trimmingCharacters(in: .whitespacesAndNewlines))
         </entry>
         """
     }
 
-    /// One line of the index the AI reads before deciding whether to reuse or create.
-    static func digestIndexLine(_ thought: Thought) -> String {
-        let others = thought.aliases.isEmpty ? "-" : thought.aliases.joined(separator: "; ")
-        let summary = thought.summary.isEmpty ? "-" : thought.summary
-        return "- \(thought.id) | \(thought.label) | \(thought.kind.rawValue) | \(others) | \(summary)"
-    }
-
     // MARK: - Memory: the weekly tidy
 
     /// How the AI looks across all of memory, about once a week. The app checks
     /// every proposal afterwards (see MemoryTidier), so nothing here is taken on trust.
+    ///
+    /// Since M14 it does two things only: it points out thoughts that are the same thing
+    /// under two names, and thoughts that came up once and never returned. It no longer
+    /// names patterns or writes a profile: what recurs is counted by the app.
     static let tidySystem = """
-    You look after a private memory built from one person's journal. Their entries were read one at a time. Your job is the weekly tidy: looking across all of it for what a single entry could not show.
+    You look after a private memory built from one person's journal. Their entries were read one at a time, so the same person or topic may have ended up under two names. Your job is the weekly tidy.
 
-    You are given the profile, every thought in memory with some of its quoted lines (each with the id and the day of the entry it came from), the links between thoughts, and summaries of recent entries. Reply with JSON in the required shape and nothing else.
+    You are given every thought in memory with its kind, how many entries it is in, and some of its quoted lines. Reply with JSON in the required shape and nothing else.
 
     Merge duplicates
-    - If two thoughts are clearly the same thing under different names, fold the less established one into the other, using their ids.
+    - If two thoughts are clearly the same thing under different names ("Ma" and "my mother", "the pricing page" and "pricing"), fold the less established one into the other, using their ids.
     - Merge only when you are sure. Two things that often appear together are not the same thing. When unsure, leave them apart.
-    - Never merge two different people.
+    - Never merge two different people. Never merge a person with a topic. Leave feelings and things marked "still open" alone.
 
     Retire one-offs
-    - List the ids of thoughts that came up in a single entry some weeks ago, never returned, and are not connected to anything that matters now. The app decides whether each one really qualifies.
-
-    Patterns across weeks
-    - Look for what recurs across several entries, or for one thing that reliably goes with another.
-    - A pattern that deserves its own thought goes in patterns, with a short plain label of two to five words and one or two sentences on what it is. If a thought for it already exists, do not create another.
-    - A relationship between two thoughts goes in links, with the reason in a few plain words, such as "shows up whenever", "in tension with", "led to" or "eases".
-    - Every pattern and every link needs quoted lines from at least two different entries. Copy each quote exactly as it is given to you, together with the id of the entry it came from. Do not write new quotes and do not change a word.
-    - Prefer a few solid observations to many thin ones. Finding none is fine.
-
-    Profile
-    - Rewrite the profile if it no longer matches memory: what is on their mind lately, patterns that have held over weeks, and the people and projects that matter. At most 150 words of plain prose, written about them as "they". Otherwise return null.
-    - Put nothing in the profile that the thoughts do not support.
-
-    Tone
-    - Describe, do not judge. Do not diagnose or label them or anyone else with a condition. Prefer their words to clinical ones.
+    - List the ids of people and topics that came up in a single entry some weeks ago and never returned. The app decides whether each one really qualifies.
+    - Never list a feeling, something that helped, or something still open.
 
     The reply is one JSON object with exactly these fields:
     - merges: a list of {from, into}.
     - retire: a list of thought ids.
-    - patterns: a list of {label, kind, summary, evidence}. evidence is a list of {entry_id, quote}. kind is one of theme, feeling, person, idea, question, decision, event.
-    - links: a list of {from, to, reason, evidence}, with evidence as above.
-    - profile: the rewritten profile, or null.
-    Lists may be empty.
+    Lists may be empty. Finding nothing to change is fine.
     """
 
-    /// The material for one tidy: the profile, every thought with its recent quotes and links, and recent entry summaries.
-    static func tidyMessage(profile: String, thoughts: [Thought], recentDigests: [EntryDigest], today: Date) -> String {
-        let profileText = profile.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// The material for one tidy: every thought with its kind, how often it is seen, and its recent quotes.
+    static func tidyMessage(thoughts: [Thought], today: Date) -> String {
         var lines: [String] = [
             "Today is \(longDay(today)).",
             "",
-            "Profile:",
-            profileText.isEmpty ? "(none yet)" : profileText,
-            "",
-            "Thoughts in memory (id | label | kind | other names | number of entries | first seen | last seen | what it is):",
+            "Thoughts in memory (id | name | kind | other names | number of entries | first seen | last seen):",
         ]
 
         for thought in thoughts.sorted(by: { $0.id < $1.id }) {
             let others = thought.aliases.isEmpty ? "-" : thought.aliases.joined(separator: "; ")
             let entries = Set(thought.evidence.map(\.entryID)).count
-            lines.append("- \(thought.id) | \(thought.label) | \(thought.kind.rawValue) | \(others) | \(entries) | \(thought.firstSeen ?? "-") | \(thought.lastSeen ?? "-") | \(thought.summary.isEmpty ? "-" : thought.summary)")
-            for item in thought.evidence.sorted(by: { ($0.date, $0.quote) < ($1.date, $1.quote) }).suffix(6) {
-                lines.append("    quote [\(item.entryID.uuidString)] \(item.date): \"\(MemoryText.singleLine(item.quote))\"")
-            }
-            for link in thought.links.sorted(by: { ($0.target, $0.date) < ($1.target, $1.date) }) {
-                lines.append("    linked to \(link.target) (\(link.reason)), \(link.date)")
-            }
-            for link in thought.userLinks {
-                lines.append("    linked to \(link.target) by the person themselves (\(link.reason))")
+            lines.append("- \(thought.id) | \(thought.label) | \(thought.kind.name) | \(others) | \(entries) | \(thought.firstSeen ?? "-") | \(thought.lastSeen ?? "-")")
+            for item in thought.evidence.sorted(by: { ($0.date, $0.quote) < ($1.date, $1.quote) }).suffix(3) {
+                lines.append("    \(item.date): \"\(MemoryText.singleLine(item.quote))\"")
             }
         }
         if thoughts.isEmpty {
-            lines.append("(none yet)")
-        }
-
-        lines.append("")
-        lines.append("Recent entries (day [entry id]: summary):")
-        let recent = recentDigests
-            .filter { !$0.failed && !$0.summary.isEmpty }
-            .sorted { ($0.entryDate, $0.entryID.uuidString) < ($1.entryDate, $1.entryID.uuidString) }
-            .suffix(40)
-        for digest in recent {
-            lines.append("- \(digest.entryDate) [\(digest.entryID.uuidString)]: \(digest.summary)")
-        }
-        if recent.isEmpty {
             lines.append("(none yet)")
         }
         return lines.joined(separator: "\n")

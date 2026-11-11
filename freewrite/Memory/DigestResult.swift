@@ -5,59 +5,54 @@
 //  What the AI sends back after reading one entry, and the strict check that
 //  it has exactly the expected shape before anything else looks at it.
 //
-//  The same shape is given to Claude as a JSON schema, so the reply is built
-//  to fit. It is still checked here, field by field, because a reply can be
-//  cut short or declined, and because a model that does not support schemas
-//  may be chosen in Settings.
+//  Since M14 the reply is a plain list of what is in the entry, each item with
+//  a line copied from it: people, topics, feelings in the writer's own words,
+//  what happened, what they told themselves, what helped, what they want, and
+//  what is still open. The AI names nothing and explains nothing. The app
+//  decides what becomes a thought and what stays on the day (MemoryApplier).
+//
+//  The same shape is given to the model as a JSON schema, so the reply is
+//  built to fit. It is still checked here, field by field, because a reply can
+//  be cut short or declined, and because a model that does not support
+//  schemas may be chosen in Settings.
 //
 
 import Foundation
 
 struct DigestResult: Equatable {
-    /// More evidence for a thought that already exists.
-    struct ThoughtUpdate: Equatable {
-        var thoughtID: String
-        var quote: String
-        /// A revised "what this is", or nil to leave it.
-        var newSummary: String?
-        /// Another name the thought went by in this entry, or nil.
-        var newAlias: String?
-    }
-
-    /// A thought that is not in memory yet.
-    struct NewThought: Equatable {
-        var label: String
-        var kind: ThoughtKind
-        var summary: String
-        var aliases: [String]
+    /// A person or a topic, by the name the writer uses.
+    struct Named: Equatable {
+        var name: String
         var quote: String
     }
 
-    /// A connection between two thoughts, with a reason.
-    struct Link: Equatable {
-        /// An existing thought's id, or the label of a thought created in this reply.
-        var from: String
-        var to: String
-        var reason: String
+    /// A feeling or body state the writer named about themselves.
+    struct Feeling: Equatable {
+        /// Their own word or short phrase for it.
+        var word: String
+        var tone: DayLine.Tone
         var quote: String
     }
 
-    /// A note on how a thought shifted in this entry.
-    struct TimelineEntry: Equatable {
-        var thought: String
-        var note: String
+    /// Something described in a few plain words, with the line behind it.
+    struct Noted: Equatable {
+        var what: String
         var quote: String
     }
 
-    /// Two or three sentences on what the entry is about.
-    var summary: String
-    var thoughtUpdates: [ThoughtUpdate] = []
-    var newThoughts: [NewThought] = []
-    var links: [Link] = []
-    var timelineNotes: [TimelineEntry] = []
-    var openLoops: [String] = []
-    /// The whole profile, rewritten, or nil to leave it as it is.
-    var profile: String? = nil
+    var people: [Named] = []
+    var topics: [Named] = []
+    var feelings: [Feeling] = []
+    /// What happened, or what they did.
+    var happened: [Noted] = []
+    /// What they told themselves, realised or admitted. Only the line is kept.
+    var selfTalk: [String] = []
+    /// Something after which, by their own account, they felt better.
+    var helped: [Noted] = []
+    /// What they said they want, do not want, or have decided.
+    var matters: [Noted] = []
+    /// What they said they still need to do or decide.
+    var openLoops: [Noted] = []
 }
 
 /// Why a reply could not be used. The reasons never contain entry text.
@@ -74,56 +69,43 @@ enum DigestParser {
             throw DigestParseError(reason: "The reply was not valid JSON.")
         }
         let object = try dictionary(root, named: "reply", keys: [
-            "summary", "thought_updates", "new_thoughts", "links", "timeline_notes", "open_loops", "profile",
+            "people", "topics", "feelings", "happened", "self_talk", "helped", "matters", "open_loops",
         ])
 
-        var result = DigestResult(summary: try string(object, "summary"))
-
-        result.thoughtUpdates = try array(object, "thought_updates").map { item in
-            let fields = try dictionary(item, named: "thought_updates", keys: ["thought_id", "quote", "new_summary", "new_alias"])
-            return DigestResult.ThoughtUpdate(
-                thoughtID: try string(fields, "thought_id"),
-                quote: try string(fields, "quote"),
-                newSummary: try optionalString(fields, "new_summary"),
-                newAlias: try optionalString(fields, "new_alias")
-            )
-        }
-
-        result.newThoughts = try array(object, "new_thoughts").map { item in
-            let fields = try dictionary(item, named: "new_thoughts", keys: ["label", "kind", "summary", "aliases", "quote"])
-            guard let kind = ThoughtKind(loose: try string(fields, "kind")) else {
-                throw DigestParseError(reason: "A new thought had a kind that is not one of the seven allowed.")
+        func named(_ key: String) throws -> [DigestResult.Named] {
+            try array(object, key).map { item in
+                let fields = try dictionary(item, named: key, keys: ["name", "quote"])
+                return DigestResult.Named(name: try string(fields, "name"), quote: try string(fields, "quote"))
             }
-            return DigestResult.NewThought(
-                label: try string(fields, "label"),
-                kind: kind,
-                summary: try string(fields, "summary"),
-                aliases: try strings(fields, "aliases"),
-                quote: try string(fields, "quote")
-            )
         }
 
-        result.links = try array(object, "links").map { item in
-            let fields = try dictionary(item, named: "links", keys: ["from", "to", "reason", "quote"])
-            return DigestResult.Link(
-                from: try string(fields, "from"),
-                to: try string(fields, "to"),
-                reason: try string(fields, "reason"),
-                quote: try string(fields, "quote")
-            )
+        func noted(_ key: String) throws -> [DigestResult.Noted] {
+            try array(object, key).map { item in
+                let fields = try dictionary(item, named: key, keys: ["what", "quote"])
+                return DigestResult.Noted(what: try string(fields, "what"), quote: try string(fields, "quote"))
+            }
         }
 
-        result.timelineNotes = try array(object, "timeline_notes").map { item in
-            let fields = try dictionary(item, named: "timeline_notes", keys: ["thought", "note", "quote"])
-            return DigestResult.TimelineEntry(
-                thought: try string(fields, "thought"),
-                note: try string(fields, "note"),
-                quote: try string(fields, "quote")
-            )
+        var result = DigestResult()
+        result.people = try named("people")
+        result.topics = try named("topics")
+
+        result.feelings = try array(object, "feelings").map { item in
+            let fields = try dictionary(item, named: "feelings", keys: ["word", "tone", "quote"])
+            let tone = try string(fields, "tone").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard let known = DayLine.Tone(rawValue: tone) else {
+                throw DigestParseError(reason: "A feeling had a tone that is not pleasant, unpleasant or mixed.")
+            }
+            return DigestResult.Feeling(word: try string(fields, "word"), tone: known, quote: try string(fields, "quote"))
         }
 
-        result.openLoops = try strings(object, "open_loops")
-        result.profile = try optionalString(object, "profile")
+        result.happened = try noted("happened")
+        result.selfTalk = try array(object, "self_talk").map { item in
+            try string(try dictionary(item, named: "self_talk", keys: ["quote"]), "quote")
+        }
+        result.helped = try noted("helped")
+        result.matters = try noted("matters")
+        result.openLoops = try noted("open_loops")
         return result
     }
 
@@ -182,8 +164,9 @@ enum DigestParser {
     }
 }
 
-/// The shape of a digest, in the form Claude's API takes (a JSON schema).
-/// Every object lists all of its fields and allows no others, as the API requires.
+/// The shape of a digest, as a JSON schema. Every object lists all of its fields and
+/// allows no others, as the services require. It is written in the order a reply is best
+/// filled in (see rule 11 of M8: the shape is sent exactly as written).
 /// It must stay in step with `DigestParser` above; a test checks that it does.
 enum DigestSchema {
     static let json = """
@@ -191,97 +174,105 @@ enum DigestSchema {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "summary",
-        "thought_updates",
-        "new_thoughts",
-        "links",
-        "timeline_notes",
-        "open_loops",
-        "profile"
+        "people",
+        "topics",
+        "feelings",
+        "happened",
+        "self_talk",
+        "helped",
+        "matters",
+        "open_loops"
       ],
       "properties": {
-        "summary": {
-          "type": "string",
-          "description": "Two or three sentences on what this entry is about."
-        },
-        "thought_updates": {
+        "people": {
           "type": "array",
-          "description": "Thoughts from the index that this entry touches.",
+          "description": "Every person named or referred to in the entry.",
           "items": {
             "type": "object",
             "additionalProperties": false,
             "required": [
-              "thought_id",
-              "quote",
-              "new_summary",
-              "new_alias"
+              "name",
+              "quote"
             ],
             "properties": {
-              "thought_id": {
+              "name": {
                 "type": "string",
-                "description": "An id copied exactly from the index."
+                "description": "How the writer refers to them. If they are already in memory, that exact name."
               },
               "quote": {
                 "type": "string",
                 "description": "A line copied exactly from this entry."
-              },
-              "new_summary": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "A revised one or two sentence description, or null to keep the current one."
-              },
-              "new_alias": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "Another name used for it in this entry, or null."
               }
             }
           }
         },
-        "new_thoughts": {
+        "topics": {
           "type": "array",
-          "description": "Thoughts that are not in the index. Create one only when nothing in the index fits.",
+          "description": "Things the entry is about that could come up again.",
           "items": {
             "type": "object",
             "additionalProperties": false,
             "required": [
-              "label",
-              "kind",
-              "summary",
-              "aliases",
+              "name",
               "quote"
             ],
             "properties": {
-              "label": {
+              "name": {
                 "type": "string",
-                "description": "A short plain name, two to five words."
+                "description": "Two or three plain words from the entry. If it is already in memory, that exact name."
               },
-              "kind": {
+              "quote": {
+                "type": "string",
+                "description": "A line copied exactly from this entry."
+              }
+            }
+          }
+        },
+        "feelings": {
+          "type": "array",
+          "description": "Feelings or body states the writer names about themselves.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "word",
+              "tone",
+              "quote"
+            ],
+            "properties": {
+              "word": {
+                "type": "string",
+                "description": "Their own word or short phrase for it."
+              },
+              "tone": {
                 "type": "string",
                 "enum": [
-                  "theme",
-                  "feeling",
-                  "person",
-                  "idea",
-                  "question",
-                  "decision",
-                  "event"
+                  "pleasant",
+                  "unpleasant",
+                  "mixed"
                 ]
               },
-              "summary": {
+              "quote": {
                 "type": "string",
-                "description": "One or two sentences on what this is."
-              },
-              "aliases": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                },
-                "description": "Other names it went by in this entry. May be empty."
+                "description": "A line copied exactly from this entry."
+              }
+            }
+          }
+        },
+        "happened": {
+          "type": "array",
+          "description": "Things that happened or that they did.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "what",
+              "quote"
+            ],
+            "properties": {
+              "what": {
+                "type": "string",
+                "description": "A short plain phrase."
               },
               "quote": {
                 "type": "string",
@@ -290,30 +281,37 @@ enum DigestSchema {
             }
           }
         },
-        "links": {
+        "self_talk": {
           "type": "array",
-          "description": "Connections between two thoughts that this entry shows.",
+          "description": "What they tell themselves, realise or admit about themselves.",
           "items": {
             "type": "object",
             "additionalProperties": false,
             "required": [
-              "from",
-              "to",
-              "reason",
               "quote"
             ],
             "properties": {
-              "from": {
+              "quote": {
                 "type": "string",
-                "description": "An id from the index, or the exact label of a new thought in this reply."
-              },
-              "to": {
+                "description": "A line copied exactly from this entry."
+              }
+            }
+          }
+        },
+        "helped": {
+          "type": "array",
+          "description": "Something after which, by their own account, they felt better.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "what",
+              "quote"
+            ],
+            "properties": {
+              "what": {
                 "type": "string",
-                "description": "An id from the index, or the exact label of a new thought in this reply."
-              },
-              "reason": {
-                "type": "string",
-                "description": "A few plain words, such as: shows up whenever, in tension with, led to."
+                "description": "The thing that helped, in a few plain words."
               },
               "quote": {
                 "type": "string",
@@ -322,25 +320,20 @@ enum DigestSchema {
             }
           }
         },
-        "timeline_notes": {
+        "matters": {
           "type": "array",
-          "description": "Notes on how a thought shifted in this entry.",
+          "description": "What they say they want, do not want, or have decided.",
           "items": {
             "type": "object",
             "additionalProperties": false,
             "required": [
-              "thought",
-              "note",
+              "what",
               "quote"
             ],
             "properties": {
-              "thought": {
+              "what": {
                 "type": "string",
-                "description": "An id from the index, or the exact label of a new thought in this reply."
-              },
-              "note": {
-                "type": "string",
-                "description": "One short sentence on what changed."
+                "description": "A short plain phrase."
               },
               "quote": {
                 "type": "string",
@@ -351,17 +344,25 @@ enum DigestSchema {
         },
         "open_loops": {
           "type": "array",
+          "description": "Things they say they still need to do or decide.",
           "items": {
-            "type": "string"
-          },
-          "description": "Things they said they need to do, decide or come back to."
-        },
-        "profile": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "The whole profile rewritten, or null if this entry does not change the picture."
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "what",
+              "quote"
+            ],
+            "properties": {
+              "what": {
+                "type": "string",
+                "description": "A short plain phrase."
+              },
+              "quote": {
+                "type": "string",
+                "description": "A line copied exactly from this entry."
+              }
+            }
+          }
         }
       }
     }

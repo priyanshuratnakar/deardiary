@@ -3,7 +3,8 @@
 //  Dear Diary
 //
 //  The user's manual fixes to memory: rename a thought, fold one thought into
-//  another, delete a thought, add a link by hand, remove a link.
+//  another, delete a thought, add a link by hand, remove a link, and close
+//  something that was still open (done, or not doing it).
 //
 //  Each fix does two things: it changes memory now, and it is written into
 //  the fixes file (pins.json) so the AI can never undo it, not in a later
@@ -21,6 +22,9 @@ enum MemoryFix: Equatable {
     case delete(id: String)
     case addLink(from: String, to: String, reason: String)
     case removeLink(String, String)
+    /// Close something that was still open. It leaves the map and does not come back;
+    /// its line stays on its day. `on` is the day it was closed, as yyyy-MM-dd.
+    case settle(id: String, as: Pins.Settled, on: String)
 }
 
 enum MemoryFixes {
@@ -69,6 +73,26 @@ enum MemoryFixes {
             }
             pins.deletions.removeAll { $0.id == id }
             pins.deletions.append(Pins.Deletion(id: id, label: thought.label, names: thought.aliases))
+            pins.renames.removeAll { $0.id == id }
+            pins.linksAdded.removeAll { $0.from == id || $0.to == id }
+
+        case .settle(let id, let how, let day):
+            guard let thought = memory.thoughts[id], thought.kind == .open else {
+                return false
+            }
+            // Kept with the deletions, so every rule that keeps a deleted thought from coming
+            // back also keeps a closed one from coming back. Its names include the writer's
+            // own lines, so those lines can be shown as done on their days.
+            let earlier = pins.renames.filter { $0.id == id }.flatMap { [$0.label] + ($0.names ?? []) }
+            let lines = thought.evidence.map { MemoryApplier.openLabel($0.quote) }
+            pins.deletions.removeAll { $0.id == id }
+            pins.deletions.append(Pins.Deletion(
+                id: id,
+                label: thought.label,
+                names: unique(thought.aliases + earlier + lines, excluding: thought.label),
+                settled: how.rawValue,
+                on: day
+            ))
             pins.renames.removeAll { $0.id == id }
             pins.linksAdded.removeAll { $0.from == id || $0.to == id }
 

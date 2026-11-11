@@ -52,24 +52,31 @@ import Testing
         #expect(request.jsonSchema == DigestSchema.data)
         #expect(request.retryIfDeclined)
         #expect(request.messages.first?.text.contains("I said yes to everything she asked") == true)
-        #expect(request.messages.first?.text.contains("(none yet)") == true)
+        #expect(request.messages.first?.text.hasPrefix("People already in memory: (none yet)\nTopics already in memory: (none yet)\nFeelings already in memory: (none yet)\n\nEntry written on Monday 2 November 2026:\n<entry>\n") == true)
 
-        // What was written.
+        // What was written: the lasting things as notes, with nothing in the AI's words about them.
         let memory = sandbox.store.loadSnapshot()
-        #expect(Set(memory.thoughts.keys) == ["saying-yes-under-pressure", "meera", "trouble-sleeping", "the-launch"])
-        #expect(memory.profile.hasPrefix("They are in the middle of a launch"))
+        #expect(Set(memory.thoughts.keys) == ["meera", "the-launch"])
+        #expect(memory.thoughts.values.allSatisfy { $0.summary.isEmpty && $0.timeline.isEmpty })
+        #expect(memory.profile.isEmpty)
 
+        // And the day's own lines, kept with the entry's digest.
         let digest = try #require(sandbox.store.loadDigest(entryID: MemoryWeek.monday.id))
         #expect(digest.textHash == MemoryEngine.fingerprint(MemoryWeek.monday.text))
         #expect(digest.entryDate == "2026-11-02")
         #expect(digest.model == "model-for-memory")
-        #expect(digest.thoughts == ["meera", "saying-yes-under-pressure", "the-launch", "trouble-sleeping"])
-        #expect(digest.rejected == [EntryDigest.Rejection(item: "new_thought", reason: "Its quote is not in the entry.")])
+        #expect(digest.thoughts == ["meera", "the-launch"])
+        #expect(digest.isJournalShaped)
+        #expect(digest.summary.isEmpty)
+        #expect(digest.lines?.map(\.kind) == [.felt, .felt, .happened, .toldYourself])
+        #expect(digest.lines?.first == DayLine(kind: .felt, quote: "Couldn’t sleep again.", word: "Couldn't sleep", tone: .unpleasant))
+        #expect(digest.rejected == [EntryDigest.Rejection(item: "feeling", reason: "Its quote is not in the entry.")])
         #expect(digest.inputTokens == 1200)
         #expect(digest.failed == false)
 
         let status = await summary(of: engine)
-        #expect(status.thoughts == 4)
+        #expect(status.hasOlderShape == false)
+        #expect(status.thoughts == 2)
         #expect(status.digestedEntries == 1)
         #expect(status.waitingEntries == 0)
         #expect(status.isWorking == false)
@@ -84,13 +91,16 @@ import Testing
 
         #expect(await sandbox.engine(provider).runPass() == .finished(digested: 2))
 
-        // Oldest first, and the second request carries the index and profile built by the first.
+        // Oldest first, and the second request carries the names found by the first, so the
+        // same person, topic or feeling is not given a second name.
         let second = try #require(provider.requests.last?.messages.first?.text)
-        #expect(second.contains("- the-launch | The launch | event | - | A launch at work that keeps pulling at their attention."))
-        #expect(second.contains("- saying-yes-under-pressure | Saying yes under pressure | theme | can't say no |"))
-        #expect(second.contains("They are in the middle of a launch at work"))
+        #expect(second.contains("People already in memory: Meera\n"))
+        #expect(second.contains("Topics already in memory: the launch\n"))
+        #expect(second.contains("Feelings already in memory: Couldn't sleep (unpleasant), felt sick (unpleasant)\n"))
         #expect(second.contains("Went for a run before work"))
+        // Only names are handed on: nothing else from the earlier entry.
         #expect(!second.contains("I said yes to everything she asked"))
+        #expect(!second.contains("the call with Meera"))
     }
 
     // MARK: - When an entry counts as settled
@@ -174,9 +184,7 @@ import Testing
     @Test func anEditedEntryIsDigestedAgainAndItsOldLinesAreReplaced() async {
         let sandbox = MemorySandbox()
         sandbox.writeEntry(MemoryWeek.monday)
-        let revised = DigestJSON.reply(new: [
-            DigestJSON.new("Meera", kind: "person", summary: "A colleague.", quote: "Meera was kind about it in the end."),
-        ])
+        let revised = DigestJSON.reply(people: [DigestJSON.named("Meera", "Meera was kind about it in the end.")])
         let provider = FakeProvider([.reply([MemoryWeek.mondayReply]), .reply([revised])])
         let engine = sandbox.engine(provider)
         await engine.runPass()
@@ -188,7 +196,9 @@ import Testing
         let memory = sandbox.store.loadSnapshot()
         #expect(Set(memory.thoughts.keys) == ["meera"])
         #expect(memory.thoughts["meera"]?.evidence.map(\.quote) == ["Meera was kind about it in the end."])
-        #expect(!sandbox.thoughtFileExists("trouble-sleeping"))
+        #expect(!sandbox.thoughtFileExists("the-launch"))
+        // The day's lines are replaced too.
+        #expect(sandbox.store.loadDigest(entryID: MemoryWeek.monday.id)?.lines == [])
     }
 
     @Test func aDeletedEntryTakesItsLinesOutOfMemory() async {
@@ -204,7 +214,7 @@ import Testing
 
         #expect(provider.requests.count == 2)
         #expect(sandbox.store.loadDigest(entryID: MemoryWeek.monday.id) == nil)
-        #expect(Set(sandbox.store.loadSnapshot().thoughts.keys) == ["the-launch", "running", "arjun"])
+        #expect(Set(sandbox.store.loadSnapshot().thoughts.keys) == ["the-launch", "arjun", "the-friday-review", "a-run-before-work"])
     }
 
     @Test func theWelcomeGuideVideoEntriesAndEmptyPagesAreSkipped() async throws {
@@ -283,13 +293,13 @@ import Testing
         let sandbox = MemorySandbox()
         sandbox.writeEntry(MemoryWeek.monday)
         sandbox.writeEntry(MemoryWeek.wednesday)
-        let provider = FakeProvider([.fail(.refused), .reply([DigestJSON.reply(summary: "Wednesday.")])])
+        let provider = FakeProvider([.fail(.refused), .reply([DigestJSON.reply(selfTalk: ["The launch date moved again."])])])
         let engine = sandbox.engine(provider)
 
         #expect(await engine.runPass() == .finished(digested: 2))
 
         #expect(sandbox.store.loadDigest(entryID: MemoryWeek.monday.id)?.failed == true)
-        #expect(sandbox.store.loadDigest(entryID: MemoryWeek.wednesday.id)?.summary == "Wednesday.")
+        #expect(sandbox.store.loadDigest(entryID: MemoryWeek.wednesday.id)?.lines == [DayLine(kind: .toldYourself, quote: "The launch date moved again.")])
         #expect(await summary(of: engine).problem == nil)
     }
 
@@ -357,7 +367,7 @@ import Testing
 
         #expect(await engine.runPass() == .finished(digested: 4))
         let first = sandbox.store.loadSnapshot()
-        #expect(first.thoughts.count == 7)
+        #expect(first.thoughts.count == 8)
 
         // The user's fixes and a hand-written note live in the memory folder too.
         try "{\"renames\": []}".write(to: sandbox.store.pinsURL, atomically: true, encoding: .utf8)
@@ -402,6 +412,99 @@ import Testing
         #expect(!FileManager.default.fileExists(atPath: sandbox.store.folder.path))
         #expect(FileManager.default.fileExists(atPath: entryURL.path))
         #expect(await summary(of: engine) == MemorySummary())
+    }
+
+    // MARK: - The shape of a journal
+
+    @Test func theWholeWeekIsKeptAsLastingThingsAndTheDaysOwnLines() async throws {
+        let sandbox = MemorySandbox()
+        for entry in MemoryWeek.entries {
+            sandbox.writeEntry(entry)
+        }
+        let engine = sandbox.engine(FakeProvider(MemoryWeek.replies.map { .reply([$0]) }))
+
+        #expect(await engine.runPass() == .finished(digested: 4))
+
+        // The engine and the made-up week read by hand agree, file for file.
+        let expected = try MemoryWeek.read()
+        #expect(sandbox.store.loadSnapshot() == expected.memory)
+        for digest in expected.digests {
+            let saved = try #require(sandbox.store.loadDigest(entryID: digest.entryID))
+            #expect(saved.lines == digest.lines)
+            #expect(saved.thoughts == digest.thoughts)
+        }
+
+        let memory = sandbox.store.loadSnapshot()
+        let kinds = Dictionary(grouping: memory.thoughts.values, by: \.kind).mapValues { $0.map(\.label).sorted() }
+        #expect(kinds[.person] == ["Arjun", "Meera"])
+        #expect(kinds[.topic] == ["the Friday review", "the launch", "the pricing page"])
+        #expect(kinds[.helped] == ["a run before work"])
+        #expect(kinds[.open] == ["I said I needed to think about it", "Need to tell her by Tuesday"])
+        // The profile is a few counted lines, not a paragraph about the writer.
+        #expect(memory.profile == """
+        Most written about in the last month: Meera (3 entries), the launch (2 entries), the pricing page (2 entries).
+        Still open: 2 things, the oldest since Friday 6 November 2026.
+        They wrote that these helped: a run before work.
+        """)
+    }
+
+    @Test func aFeelingNamedInTheSameWordsOnTwoDaysBecomesAThoughtAndGoesWhenADayGoes() async throws {
+        let sandbox = MemorySandbox(now: MemoryWeek.day(24, hour: 21))
+        let first = MemoryWeek.Entry(id: UUID(uuidString: "00000000-0000-0000-0000-000000000011")!, startedAt: MemoryWeek.day(11), text: "Tanvi said I've been distant. She's right. I'm tired all the time.")
+        let second = MemoryWeek.Entry(id: UUID(uuidString: "00000000-0000-0000-0000-000000000022")!, startedAt: MemoryWeek.day(22), text: "I'm so tired of all of it. I haven't told anyone that.")
+        sandbox.writeEntry(first)
+        sandbox.writeEntry(second)
+        let provider = FakeProvider([
+            .reply([DigestJSON.reply(people: [DigestJSON.named("Tanvi", "Tanvi said I've been distant.")], feelings: [DigestJSON.felt("tired", "unpleasant", "I'm tired all the time")])]),
+            .reply([DigestJSON.reply(feelings: [DigestJSON.felt("tired", "unpleasant", "I'm so tired of all of it.")])]),
+        ])
+        let engine = sandbox.engine(provider)
+
+        #expect(await engine.runPass() == .finished(digested: 2))
+
+        // The second entry was told which feelings the writer had already named.
+        #expect(provider.requests.last?.messages.first?.text.contains("Feelings already in memory: tired (unpleasant)") == true)
+        let tired = try #require(sandbox.store.loadSnapshot().thoughts["felt-tired"])
+        #expect(tired.kind == .feeling)
+        #expect(tired.label == "tired")
+        #expect(tired.evidence.map(\.quote) == ["I'm tired all the time", "I'm so tired of all of it."])
+        // The second day touched no person or topic, only the feeling.
+        #expect(sandbox.store.loadDigest(entryID: second.id)?.thoughts == ["felt-tired"])
+
+        // Delete one of the two days: the feeling goes back to being a line on the other.
+        sandbox.deleteEntry(second)
+        await engine.runPass()
+        #expect(Set(sandbox.store.loadSnapshot().thoughts.keys) == ["tanvi"])
+        #expect(!sandbox.thoughtFileExists("felt-tired"))
+    }
+
+    @Test func entriesReadBeforeM14AreLeftAsTheyWereAndSettingsIsTold() async throws {
+        let sandbox = MemorySandbox()
+        for entry in MemoryWeek.entries {
+            sandbox.writeEntry(entry)
+        }
+        // A memory folder as an earlier version left it.
+        let older = try MemoryWeek.built()
+        try sandbox.store.write(older.memory, replacing: MemorySnapshot())
+        for digest in older.digests {
+            try sandbox.store.saveDigest(digest)
+        }
+        let provider = FakeProvider(MemoryWeek.replies.map { .reply([$0]) })
+        let engine = sandbox.engine(provider)
+
+        // Nothing is sent by itself: the entries have not changed.
+        #expect(await engine.runPass() == .finished(digested: 0))
+        #expect(provider.requests.isEmpty)
+        #expect(sandbox.store.loadSnapshot() == older.memory)
+        #expect(await summary(of: engine).hasOlderShape)
+        await engine.refreshStatus()
+        #expect(await summary(of: engine).hasOlderShape)
+
+        // A rebuild brings them into the new shape.
+        await engine.rebuild()
+        #expect(provider.requests.count == 4)
+        #expect(await summary(of: engine).hasOlderShape == false)
+        #expect(sandbox.store.loadSnapshot() == (try MemoryWeek.read().memory))
     }
 
     @Test func theSameTextAlwaysHasTheSameFingerprint() {

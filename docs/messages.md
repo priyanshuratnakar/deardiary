@@ -56,9 +56,10 @@ Shown in Settings under "Memory is On", and under the map. File: `freewrite/Memo
 | The memory folder cannot be written | Couldn't write to the memory folder. |
 | The journal folder cannot be read | Couldn't read the journal folder. |
 | The daily limit is reached | Today's limit of 40 memory requests has been reached. It carries on tomorrow. |
-| After a tidy | Tidied on Monday 30 November 2026: merged 1, retired 2, 1 pattern across weeks. |
+| After a tidy | Tidied on Monday 30 November 2026: merged 1, retired 2. |
 | A tidy with nothing to do | Tidied on Monday 30 November 2026: nothing needed changing. |
 | The tidy's answer was unusable | The last tidy couldn't be used, so nothing was changed. |
+| Some entries were read before memory took the shape of a journal | Memory now keeps your own words in place of the AI's. Rebuild memory to bring earlier entries into the new shape. |
 | Before a rebuild | This has the AI read 9 entries again and replaces what it has learned. Your fixes are kept. |
 | Before forgetting | This deletes the memory folder, including your fixes, and turns memory off. Your entries are not touched. |
 
@@ -76,7 +77,11 @@ Files: `freewrite/Map/MapView.swift`, `freewrite/Map/MapDetailView.swift`.
 | Find, before typing | A name |
 | Find, with matches | 2 thoughts |
 | Find, with none | No thought by that name |
-| A day's panel | day · touched 4 thoughts; What it touched; Open this entry |
+| A day's panel | day · touched 4 thoughts; In your words; What it touched; Open this entry |
+| A day that touched nothing lasting | day |
+| The words before one of your lines | felt · told yourself · happened · wanted · helped · still open · done · not doing it |
+| After a feeling | pleasant · unpleasant · mixed |
+| The kinds, in the legend and on hover | Person · Topic · Feeling · What helped · Still open · Day (a memory from before M14 also shows Theme, Idea, Question, Decision, Event) |
 | Picking a thought to merge into | Click the thought to fold this one into. |
 | Before a merge | Fold “Arjun” into “Meera”? Its lines, links and names move over. This cannot be undone here. |
 | Picking a thought to link to | Click the thought to link this one to. |
@@ -84,6 +89,23 @@ Files: `freewrite/Map/MapView.swift`, `freewrite/Map/MapDetailView.swift`.
 | Before a delete | Delete “Running”? It is removed from memory and the AI will not bring it back. Your entries are not touched. |
 | Before removing a link | Remove the link between “Meera” and “The pricing page”? The AI will not put it back. |
 | A link made by hand | Linked by you. There is no quoted line behind this. |
+| A link the app made | in the same sentence |
+| Before marking something done | Mark this as done? It leaves the map. The line stays on its day, marked done. |
+| Before dropping something | Not doing this after all? It leaves the map. The line stays on its day. |
+
+### What the panel says by counting
+
+Written by the app from fixed wording, never by a model. File: `freewrite/Memory/MemoryCounts.swift`. Keep "because", "always", "often" and "tends to" out of these; a test checks.
+
+| When | Message |
+| --- | --- |
+| A person or topic, several days | In 4 entries, from Monday 2 November to Thursday 19 November 2026. |
+| One day | In 1 entry, on Wednesday 4 November 2026. |
+| Three or more of those days were read in your words | On 3 of those 4 days you also named an unpleasant feeling. |
+| A feeling | Named on 2 days, both unpleasant. · Named on 3 days, all unpleasant. · Named on 3 days: 2 unpleasant, 1 pleasant. |
+| Something that helped | You wrote that this helped on 1 day. |
+| Something still open | Open since Sunday 8 November 2026. |
+| The profile (given to Talk as background, and saved as `profile.md`) | Most written about in the last month: Meera (3 entries), the launch (2 entries). · Still open: 2 things, the oldest since Friday 6 November 2026. · They wrote that these helped: a run before work. |
 
 ## Versions
 

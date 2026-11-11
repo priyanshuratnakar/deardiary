@@ -14,8 +14,8 @@ A blank page to write on, an AI you can talk the page through with, and a memory
 
 - **The page.** A blank page with a timer, fonts, video entries, backspace off and History. A new entry each day, saved as you type.
 - **Talk.** Write first, then open a column beside the page and think it through with an AI that has read the entry. It answers in your own words, asks one thing at a time, and when it brings up an earlier day the app shows the line exactly as you wrote it.
-- **Memory.** The AI reads each entry once you have finished with it and keeps notes on the people, feelings, questions and decisions that keep coming up. Every note is tied to a line you wrote. If the AI quotes something that is not in your entry, the note is thrown away.
-- **A map of that memory.** Thoughts are coloured dots and the days you wrote are small grey ones. Click a thought to read the lines behind it. Rename, merge, link or delete anything the AI got wrong, and your fixes win from then on.
+- **Memory.** The AI reads each entry once you have finished with it and finds the people and topics in it, what you felt, what you told yourself, what helped and what is still open. It keeps your own words, not its own: every item is a line copied from the entry, and a line that is not there is thrown away. It writes nothing about you; what recurs is counted by the app.
+- **A map of that memory.** People, topics, what helped and what is still open are coloured dots, and the days you wrote are small grey ones. Click a dot to read what you wrote on those days. Rename, merge, link or delete anything that is wrong, mark something open as done, and your fixes win from then on.
 - **Versions.** A copy of an entry every five minutes while it changes, so you can read an earlier one and bring it back.
 - **A lock.** Dear Diary opens locked and asks for Touch ID or your Mac password. It locks again when your Mac sleeps and after a while in the background.
 
@@ -72,7 +72,7 @@ Dear Diary is sandboxed, so its folder is inside its own container:
   [id]-[date].md        your entries
   Videos/               video entries
   conversations/        what was said in Talk, one file per entry
-  memory/               the AI's notes: profile.md, thoughts/, entries/, and your fixes
+  memory/               what was found in your entries: profile.md, thoughts/, entries/, and your fixes
   versions/             earlier copies of entries
 ```
 
@@ -80,7 +80,7 @@ All of it is plain text you can read, edit or delete by hand.
 
 ## Where it stands
 
-This is a personal project and it is early. It has about 600 automated tests. Running on this Mac through Ollama and the lock have been used for real. Talk has been reworked to be specific, and Memory is next; the research behind that is in `docs/research`. The OpenAI and Claude paths are covered by tests but have not yet been tried against the real services.
+This is a personal project and it is early. It has about 650 automated tests. Running on this Mac through Ollama and the lock have been used for real. Talk and Memory have both been reworked to keep to your own words; the research behind that is in `docs/research`. The OpenAI and Claude paths are covered by tests but have not yet been tried against the real services.
 
 ## Working on the code
 

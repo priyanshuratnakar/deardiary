@@ -4,20 +4,22 @@
 //
 //  Decides what from the weekly tidy is allowed to change memory.
 //
-//  The tidy looks across all of memory, so it can do more than a digest:
-//  merge duplicates, retire one-offs, and add patterns that only show across
-//  several entries. Nothing is taken on trust:
+//  Entries are read one at a time, so the same person or topic can end up
+//  under two names, and things mentioned once pile up. The tidy looks across
+//  all of memory for those two things. Nothing is taken on trust:
 //
-//  - A merge needs both thoughts to exist, and never folds away a thought the
-//    user renamed or linked by hand.
+//  - A merge needs both thoughts to exist, never folds away a thought the
+//    user renamed or linked by hand, never joins a person with something
+//    that is not a person, and leaves feelings and open things alone.
 //  - "Retire" is only a suggestion. The app's own rule decides: the thought
-//    appears in exactly one entry, that entry is more than three weeks old,
-//    and the user has not renamed or linked it. A retired thought can come
-//    back if the topic returns.
-//  - A pattern or a cross-week link needs quoted lines from at least two
-//    different entries, each checked against the entry it cites. What is
-//    stored is the entry's own text.
+//    is a person or a topic, it appears in exactly one entry, that entry is
+//    more than three weeks old, and the user has not renamed or linked it.
+//    A retired thought can come back if it returns.
 //  - The user's fixes have the last word, as always.
+//
+//  Until M14 the tidy also named "patterns across weeks" and rewrote a
+//  profile. What recurs is now counted by the app (MemoryCounts), so the
+//  AI is no longer asked to say it.
 //
 //  This file only works on data in hand. It does not read or write files.
 //
@@ -28,16 +30,11 @@ enum MemoryTidier {
     struct Rules {
         /// A thought seen in one entry can be retired once that entry is this many days old.
         var oneOffAfterDays = 21
-        /// A pattern or cross-week link needs quotes from at least this many different entries.
-        var entriesNeeded = 2
     }
 
     struct Outcome: Equatable {
         var merged = 0
         var retired = 0
-        var patterns = 0
-        var links = 0
-        var profileRefreshed = false
         /// What was refused, and why.
         var rejected: [EntryDigest.Rejection] = []
 
@@ -46,29 +43,21 @@ enum MemoryTidier {
             var parts: [String] = []
             if merged > 0 { parts.append("merged \(merged)") }
             if retired > 0 { parts.append("retired \(retired)") }
-            if patterns > 0 { parts.append("\(patterns) \(patterns == 1 ? "pattern" : "patterns") across weeks") }
-            if links > 0 { parts.append("\(links) new \(links == 1 ? "link" : "links")") }
-            if profileRefreshed { parts.append("refreshed the profile") }
             return parts.isEmpty ? "nothing needed changing" : parts.joined(separator: ", ")
         }
     }
 
-    /// - Parameters:
-    ///   - entry: looks up an entry by id, so quotes can be checked against it. Nil if the entry is gone.
-    ///   - today: the current day, as yyyy-MM-dd.
-    static func apply(
-        _ result: TidyResult,
-        to memory: inout MemorySnapshot,
-        pins: Pins,
-        entry: (UUID) -> DigestedEntry?,
-        today: String,
-        rules: Rules = Rules()
-    ) -> Outcome {
+    /// Kinds the tidy never folds away or retires: they are the writer's own words for
+    /// something, or something that stays until the writer closes it.
+    private static let leftAlone: Set<ThoughtKind> = [.feeling, .open]
+    /// Kinds that are never retired for being seen once: one mention is the whole point.
+    private static let keptWhenSeenOnce: Set<ThoughtKind> = [.feeling, .open, .helped]
+
+    /// - Parameter today: the current day, as yyyy-MM-dd.
+    static func apply(_ result: TidyResult, to memory: inout MemorySnapshot, pins: Pins, today: String, rules: Rules = Rules()) -> Outcome {
         var outcome = Outcome()
         /// Thoughts folded away in this tidy, and where they went.
         var folded: [String: String] = [:]
-        /// Patterns created in this reply, by name, so links can point at them.
-        var createdByName: [String: String] = [:]
 
         func reject(_ item: String, _ reason: String) {
             outcome.rejected.append(EntryDigest.Rejection(item: item, reason: reason))
@@ -84,32 +73,11 @@ enum MemoryTidier {
             return id
         }
 
-        /// Checks quotes against the entries they cite and returns the entries' own text.
-        func verified(_ quotes: [TidyResult.Quote]) -> [Evidence] {
-            var found: [Evidence] = []
-            for quote in quotes {
-                guard let id = UUID(uuidString: quote.entryID.trimmingCharacters(in: CharacterSet(charactersIn: "[] \n\t"))),
-                      let source = entry(id),
-                      let text = QuoteMatcher.locate(quote.quote, in: source.text) else {
-                    continue
-                }
-                let item = Evidence(entryID: id, date: source.date, quote: text)
-                if !found.contains(item) {
-                    found.append(item)
-                }
-            }
-            return found
-        }
-
-        func enoughEntries(_ evidence: [Evidence]) -> Bool {
-            Set(evidence.map(\.entryID)).count >= rules.entriesNeeded
-        }
-
         // 1. Duplicates.
         for merge in result.merges {
             let from = current(merge.from)
             let into = current(merge.into)
-            guard memory.thoughts[from] != nil, memory.thoughts[into] != nil else {
+            guard let source = memory.thoughts[from], let target = memory.thoughts[into] else {
                 reject("merge", "It named a thought that is not in memory.")
                 continue
             }
@@ -119,6 +87,14 @@ enum MemoryTidier {
             }
             guard !pins.isTouchedByUser(from) else {
                 reject("merge", "You renamed or linked this thought.")
+                continue
+            }
+            guard !leftAlone.contains(source.kind), !leftAlone.contains(target.kind) else {
+                reject("merge", "Feelings and open things are left as you wrote them.")
+                continue
+            }
+            guard (source.kind == .person) == (target.kind == .person) else {
+                reject("merge", "A person is not folded into something that is not a person.")
                 continue
             }
             MemoryFixes.fold(from, into: into, in: &memory)
@@ -138,6 +114,10 @@ enum MemoryTidier {
                 reject("retire", "You renamed or linked this thought.")
                 continue
             }
+            guard !keptWhenSeenOnce.contains(thought.kind) else {
+                reject("retire", "It is kept even when seen once.")
+                continue
+            }
             let entries = Set(thought.evidence.map(\.entryID))
             guard entries.count == 1, let lastSeen = thought.lastSeen, lastSeen <= cutoff else {
                 reject("retire", "It is not a one-off.")
@@ -150,130 +130,12 @@ enum MemoryTidier {
             outcome.retired += 1
         }
 
-        // 3. Patterns across weeks.
-        var known = nameIndex(memory)
-        for pattern in result.patterns {
-            let label = MemoryText.singleLine(pattern.label)
-            guard !label.isEmpty else {
-                reject("pattern", "It had no name.")
-                continue
-            }
-            guard !pins.hasDeleted(name: label) else {
-                reject("pattern", "You deleted this thought.")
-                continue
-            }
-            let evidence = verified(pattern.evidence)
-            guard enoughEntries(evidence) else {
-                reject("pattern", "It needs quoted lines from at least \(rules.entriesNeeded) entries.")
-                continue
-            }
-
-            let name = MemoryText.normalizedName(label)
-            let existing = (known[name].map(current) ?? pins.pinnedID(forName: label)).flatMap { memory.thoughts[$0] == nil ? nil : $0 }
-            if let id = existing {
-                for item in evidence where memory.thoughts[id]?.evidence.contains(item) == false {
-                    memory.thoughts[id]?.evidence.append(item)
-                }
-                createdByName[name] = id
-                outcome.patterns += 1
-                continue
-            }
-
-            var id = pins.pinnedID(forName: label) ?? pins.resolve(MemoryText.slug(label))
-            guard !pins.isDeleted(id) else {
-                reject("pattern", "You deleted this thought.")
-                continue
-            }
-            var suffix = 2
-            let base = id
-            while memory.unreadableIDs.contains(id) || memory.thoughts[id] != nil {
-                id = "\(base)-\(suffix)"
-                suffix += 1
-            }
-            memory.thoughts[id] = Thought(
-                id: id,
-                label: pins.pinnedLabel(for: id) ?? label,
-                kind: pattern.kind,
-                summary: MemoryText.singleLine(pattern.summary),
-                evidence: evidence
-            )
-            known[name] = id
-            createdByName[name] = id
-            outcome.patterns += 1
-        }
-
-        // 4. Links that show across weeks.
-        func resolve(_ reference: String) -> String? {
-            let direct = current(reference)
-            if !pins.isDeleted(direct), memory.thoughts[direct] != nil {
-                return direct
-            }
-            let name = MemoryText.normalizedName(reference)
-            if let created = createdByName[name] {
-                return created
-            }
-            if let id = known[name].map(current), !pins.isDeleted(id), memory.thoughts[id] != nil {
-                return id
-            }
-            return nil
-        }
-
-        for link in result.links {
-            guard let from = resolve(link.from), let to = resolve(link.to) else {
-                reject("link", "It named a thought that is not in memory.")
-                continue
-            }
-            guard from != to else {
-                reject("link", "It linked a thought to itself.")
-                continue
-            }
-            guard !pins.isLinkRemoved(from, to) else {
-                reject("link", "You removed this link.")
-                continue
-            }
-            let reason = MemoryText.singleLine(link.reason)
-            guard !reason.isEmpty else {
-                reject("link", "It gave no reason.")
-                continue
-            }
-            let evidence = verified(link.evidence)
-            guard enoughEntries(evidence) else {
-                reject("link", "It needs quoted lines from at least \(rules.entriesNeeded) entries.")
-                continue
-            }
-            for item in evidence {
-                memory.thoughts[from]?.links.removeAll { $0.target == to && $0.entryID == item.entryID }
-                memory.thoughts[from]?.links.append(ThoughtLink(target: to, reason: reason, entryID: item.entryID, date: item.date, quote: item.quote))
-            }
-            outcome.links += 1
-        }
-
-        // 5. The profile.
-        if let profile = result.profile?.trimmingCharacters(in: .whitespacesAndNewlines), !profile.isEmpty, profile != memory.profile {
-            memory.profile = profile
-            outcome.profileRefreshed = true
-        }
-
-        // 6. The user's fixes have the last word.
+        // 3. The user's fixes have the last word.
         MemoryFixes.enforce(pins, on: &memory)
         return outcome
     }
 
-    /// Every name in memory (labels, other names, ids), pointing at its thought.
-    private static func nameIndex(_ memory: MemorySnapshot) -> [String: String] {
-        var known: [String: String] = [:]
-        for thought in memory.thoughts.values.sorted(by: { $0.id < $1.id }) {
-            for name in [thought.label, thought.id] + thought.aliases {
-                let normalised = MemoryText.normalizedName(name)
-                if !normalised.isEmpty, known[normalised] == nil {
-                    known[normalised] = thought.id
-                }
-            }
-        }
-        return known
-    }
-
-    /// The day a number of days before another, both as yyyy-MM-dd.
+    /// A day some days earlier, as yyyy-MM-dd.
     static func day(_ day: String, minus days: Int) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")

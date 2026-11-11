@@ -10,7 +10,7 @@
 //
 //      ---
 //      label: "Saying yes under pressure"
-//      kind: theme
+//      kind: theme        (person, topic, feeling, helped or open since M14)
 //      aliases:
 //        - "people-pleasing"
 //      first_seen: 2026-11-03
@@ -264,7 +264,7 @@ enum ThoughtNote {
         return Thought(
             id: id,
             label: label,
-            kind: kind ?? .theme,
+            kind: kind ?? .topic,
             aliases: aliases,
             summary: MemoryText.singleLine(summaryLines.joined(separator: " ")),
             timeline: timeline,

@@ -5,6 +5,18 @@
 //  The shapes memory is made of: thoughts, the evidence behind them, the
 //  digest kept for each entry, and the user's manual fixes ("pins").
 //
+//  Since M14 memory has the shape of a journal:
+//
+//  - A thought is a lasting thing in the writer's life, and a dot on the map:
+//    a person, a topic, something that helped, something still open, or a
+//    feeling once they have named it in the same words on two days.
+//  - Everything else is kept on the day it was written, in the writer's own
+//    words, with a word for what it is: felt, told yourself, happened,
+//    wanted (`DayLine`, kept in the entry's digest).
+//
+//  The AI no longer writes about the writer: no descriptions, no notes on how
+//  something shifted, no profile in prose. It finds and copies.
+//
 //  Everything here is plain data. Reading and writing files is in
 //  MemoryStore; deciding what goes in is in MemoryApplier.
 //
@@ -13,18 +25,79 @@ import Foundation
 
 /// What kind of thing a thought is. The map colours nodes by this.
 enum ThoughtKind: String, CaseIterable, Codable {
-    case theme
-    case feeling
+    // What memory keeps since M14: the lasting things in a journal.
     case person
+    case topic
+    /// A feeling the writer has named in the same words on two or more days.
+    case feeling
+    /// Something they wrote had helped.
+    case helped
+    /// Something they said they still need to do or decide.
+    case open
+
+    // Kinds from before M14, when the AI named and sorted thoughts itself. Notes written
+    // then keep these, and the map still shows them, until memory is rebuilt.
+    case theme
     case idea
     case question
     case decision
     case event
 
-    /// Accepts any capitalisation and stray spaces, because that is not guaranteed in model output.
+    /// The kinds a reading of an entry can produce now.
+    static let journal: [ThoughtKind] = [.person, .topic, .feeling, .helped, .open]
+
+    /// The kind in words, as the map's legend and panel show it.
+    var name: String {
+        switch self {
+        case .helped: return "what helped"
+        case .open: return "still open"
+        default: return rawValue
+        }
+    }
+
+    /// Accepts any capitalisation and stray spaces, because that is not guaranteed in a hand-edited note.
     init?(loose text: String) {
         self.init(rawValue: text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
     }
+}
+
+/// One of the writer's own lines from an entry, kept on its day with a word for what it is.
+/// The quote is always the entry's exact text.
+struct DayLine: Codable, Equatable {
+    enum Kind: String, Codable, CaseIterable {
+        case felt
+        case toldYourself = "told_yourself"
+        case happened
+        case wanted
+        case helped
+        case stillOpen = "still_open"
+
+        /// The small word shown before the line.
+        var tag: String {
+            switch self {
+            case .felt: return "felt"
+            case .toldYourself: return "told yourself"
+            case .happened: return "happened"
+            case .wanted: return "wanted"
+            case .helped: return "helped"
+            case .stillOpen: return "still open"
+            }
+        }
+    }
+
+    /// Whether a feeling was a pleasant one. Nothing finer: models are poor at exact emotion labels.
+    enum Tone: String, Codable {
+        case pleasant
+        case unpleasant
+        case mixed
+    }
+
+    var kind: Kind
+    var quote: String
+    /// For a feeling: the writer's own word for it, when that word is in the entry ("tired").
+    var word: String? = nil
+    /// For a feeling.
+    var tone: Tone? = nil
 }
 
 /// A line quoted from an entry. The quote is always the entry's exact text.
@@ -124,6 +197,12 @@ struct EntryDigest: Codable, Equatable {
     /// left alone until its text changes or memory is rebuilt.
     var failed: Bool
     var failureReason: String?
+    /// The writer's own lines from this entry, each with a word for what it is.
+    /// Nil in a digest written before M14, which kept a summary in the AI's words instead.
+    var lines: [DayLine]? = nil
+
+    /// True for a digest in the shape memory has had since M14.
+    var isJournalShaped: Bool { lines != nil }
 
     /// The names used in the JSON file.
     private enum CodingKeys: String, CodingKey {
@@ -140,6 +219,7 @@ struct EntryDigest: Codable, Equatable {
         case outputTokens = "output_tokens"
         case failed
         case failureReason = "failure_reason"
+        case lines
     }
 }
 
@@ -181,6 +261,20 @@ struct Pins: Codable, Equatable {
         var label: String
         /// Its other names.
         var names: [String]? = nil
+        /// For something that was still open and has been closed by the user: "done" or
+        /// "dropped". It leaves the map like a deleted thought, but its line stays on its day.
+        var settled: String? = nil
+        /// The day it was closed, as yyyy-MM-dd.
+        var on: String? = nil
+    }
+
+    /// How the user closed something that was still open.
+    enum Settled: String {
+        case done
+        case dropped
+
+        /// The small word shown before its line once it is closed.
+        var tag: String { self == .done ? "done" : "not doing it" }
     }
 
     struct LinkPin: Codable, Equatable {
@@ -242,6 +336,19 @@ struct Pins: Codable, Equatable {
         return deletions.contains { deletion in
             ([deletion.label, deletion.id] + (deletion.names ?? [])).contains { MemoryText.normalizedName($0) == wanted }
         }
+    }
+
+    /// How the user closed the thing a "still open" line is about, if they have.
+    func settled(forLine quote: String) -> Settled? {
+        let wanted = MemoryText.normalizedName(quote)
+        guard !wanted.isEmpty else { return nil }
+        for deletion in deletions {
+            guard let how = deletion.settled.flatMap(Settled.init(rawValue:)) else { continue }
+            if ([deletion.label] + (deletion.names ?? [])).contains(where: { MemoryText.normalizedName($0) == wanted }) {
+                return how
+            }
+        }
+        return nil
     }
 
     /// The label the user chose for a thought, if they renamed it.
@@ -309,6 +416,16 @@ enum MemoryText {
             }
         }
         return result.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// A name as it is compared, without a leading "the", "a", "an" or "my":
+    /// "The launch" and "launch" are the same thing, and so are "my boss" and "Boss".
+    static func nameWithoutArticle(_ text: String) -> String {
+        var words = normalizedName(text).split(separator: " ").map(String.init)
+        if words.count > 1, let first = words.first, ["the", "a", "an", "my"].contains(first) {
+            words.removeFirst()
+        }
+        return words.joined(separator: " ")
     }
 
     /// A file-name-safe id made from a label: "Saying yes, under pressure!" becomes "saying-yes-under-pressure".

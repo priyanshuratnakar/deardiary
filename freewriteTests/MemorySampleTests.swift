@@ -42,13 +42,14 @@ final class MemorySampleTests: XCTestCase {
             "entries/00000000-0000-0000-0000-000000000003.json",
             "entries/00000000-0000-0000-0000-000000000004.json",
             "profile.md",
+            "thoughts/a-run-before-work.md",
             "thoughts/arjun.md",
+            "thoughts/i-said-i-needed-to-think-about-it.md",
             "thoughts/meera.md",
-            "thoughts/running.md",
-            "thoughts/saying-yes-under-pressure.md",
+            "thoughts/need-to-tell-her-by-tuesday.md",
+            "thoughts/the-friday-review.md",
             "thoughts/the-launch.md",
             "thoughts/the-pricing-page.md",
-            "thoughts/trouble-sleeping.md",
         ])
     }
 

@@ -31,6 +31,17 @@ enum MapPending: Equatable {
     case reasonForLink(source: String, target: String)
     case confirmingDelete(String)
     case confirmingRemoveLink(String)
+    /// Closing something that was still open: done, or not doing it.
+    case confirmingSettle(String, Pins.Settled)
+}
+
+/// One of the writer's own lines kept on a day, with the small word that says what it is.
+struct MapTaggedLine: Equatable {
+    /// "felt", "told yourself", "still open", or "done" once the user has closed it.
+    let tag: String
+    let quote: String
+    /// For a feeling: pleasant, unpleasant or mixed.
+    var note: String? = nil
 }
 
 /// The lines quoted from one entry, for the detail panel.
@@ -39,6 +50,8 @@ struct MapDayQuotes: Equatable, Identifiable {
     /// The day the entry was started, as yyyy-MM-dd.
     let date: String
     let quotes: [String]
+    /// What else the writer felt, told themselves and wanted that day, in their own words.
+    var lines: [MapTaggedLine] = []
 
     var id: UUID { entryID }
 }
@@ -63,10 +76,15 @@ struct MapThoughtDetail: Equatable {
     let label: String
     let kind: ThoughtKind
     let aliases: [String]
+    /// What the app can say by counting: "In 4 entries, from … to …".
+    let counted: [String]
+    /// A description in the AI's words. Only a thought from before M14 has one.
     let summary: String
     let firstSeen: String?
     let lastSeen: String?
+    /// Notes in the AI's words on how it shifted. Only a thought from before M14 has any.
     let shifts: [Shift]
+    /// The days it was written about, the most recent first.
     let days: [MapDayQuotes]
     let connections: [Connection]
 }
@@ -99,8 +117,10 @@ struct MapDayDetail: Equatable {
     let entryID: UUID
     /// The day, as yyyy-MM-dd.
     let date: String
-    /// What the AI noted about the entry as a whole, if it has been read.
+    /// What the AI noted about the entry as a whole. Only an entry read before M14 has this.
     let summary: String?
+    /// The writer's own lines from that day, each with a word for what it is.
+    var lines: [MapTaggedLine] = []
     let thoughts: [Touched]
 }
 
@@ -126,8 +146,12 @@ final class MapModel: ObservableObject {
     @Published var zoom: CGFloat = 1
 
     private(set) var memory = MemorySnapshot()
-    /// What the AI noted about each entry as a whole, by entry.
+    /// What the AI noted about each entry as a whole, by entry (entries read before M14).
     private(set) var summaries: [UUID: String] = [:]
+    /// The writer's own lines kept on each day, by entry.
+    private(set) var dayLines: [UUID: [DayLine]] = [:]
+    /// The user's fixes, so a line about something they have closed says so.
+    private(set) var pins = Pins()
     private let store: MemoryStore
     private let applyFix: (MemoryFix) async -> Bool
     private var neighbours: [String: Set<String>] = [:]
@@ -183,7 +207,7 @@ final class MapModel: ObservableObject {
             selection = .thought(into)
         case .addLink(let from, let to, _):
             selection = .link(GraphEdge.id(from, to))
-        case .delete, .removeLink:
+        case .delete, .removeLink, .settle:
             selection = nil
         }
         pending = nil
@@ -198,23 +222,35 @@ final class MapModel: ObservableObject {
     /// Reads the thought notes, places any thoughts that have no remembered position, and saves the result.
     func load() async {
         let store = self.store
-        let loaded = await Task.detached(priority: .userInitiated) { () -> (MemorySnapshot, MemoryGraph, [UUID: String]) in
+        let loaded = await Task.detached(priority: .userInitiated) { () -> (MemorySnapshot, MemoryGraph, [UUID: String], [UUID: [DayLine]], Pins) in
             let memory = store.loadSnapshot()
-            let built = GraphBuilder.build(from: memory, saved: store.loadGraphPositions())
+            var summaries: [UUID: String] = [:]
+            var dayLines: [UUID: [DayLine]] = [:]
+            var otherDays: [UUID: String] = [:]
+            for digest in store.loadAllDigests() where !digest.failed {
+                if !digest.summary.isEmpty {
+                    summaries[digest.entryID] = digest.summary
+                }
+                if let lines = digest.lines {
+                    dayLines[digest.entryID] = lines
+                    if !lines.isEmpty {
+                        otherDays[digest.entryID] = digest.entryDate
+                    }
+                }
+            }
+            let built = GraphBuilder.build(from: memory, saved: store.loadGraphPositions(), otherDays: otherDays)
             let settled = GraphLayout.settle(built.graph, moving: built.unplaced)
             if !built.unplaced.isEmpty {
                 try? store.saveGraph(settled)
             }
-            var summaries: [UUID: String] = [:]
-            for digest in store.loadAllDigests() where !digest.failed && !digest.summary.isEmpty {
-                summaries[digest.entryID] = digest.summary
-            }
-            return (memory, settled, summaries)
+            return (memory, settled, summaries, dayLines, store.loadPins())
         }.value
 
         memory = loaded.0
         graph = loaded.1
         summaries = loaded.2
+        dayLines = loaded.3
+        pins = loaded.4
         neighbours = graph.neighbours
         isLoading = false
 
@@ -232,10 +268,19 @@ final class MapModel: ObservableObject {
     }
 
     /// For tests and pictures: show this memory without touching any files.
-    func show(memory: MemorySnapshot, positions: [String: CGPoint] = [:], summaries: [UUID: String] = [:]) {
-        let built = GraphBuilder.build(from: memory, saved: positions)
+    func show(
+        memory: MemorySnapshot,
+        positions: [String: CGPoint] = [:],
+        summaries: [UUID: String] = [:],
+        dayLines: [UUID: (date: String, lines: [DayLine])] = [:],
+        pins: Pins = Pins()
+    ) {
+        let otherDays = dayLines.filter { !$0.value.lines.isEmpty }.mapValues(\.date)
+        let built = GraphBuilder.build(from: memory, saved: positions, otherDays: otherDays)
         self.memory = memory
         self.summaries = summaries
+        self.dayLines = dayLines.mapValues(\.lines)
+        self.pins = pins
         graph = GraphLayout.settle(built.graph, moving: built.unplaced)
         neighbours = graph.neighbours
         isLoading = false
@@ -563,6 +608,10 @@ final class MapModel: ObservableObject {
     /// importance (whatever is under the pointer or selected, then the most recurring
     /// thoughts) and a name is left out if it would sit on top of another name or
     /// another dot. Zooming in makes room, so more names appear.
+    ///
+    /// Something still open is named by the writer's own line, which is a sentence. On a
+    /// map of any size such a name is placed after the others and left out if it would sit
+    /// on top of one of them. Pointing at the dot, or selecting it, brings it back.
     func placedLabels(in size: CGSize, fontName: String) -> [PlacedLabel] {
         let nodes = graph.nodes
         let crowded = nodes.filter { !$0.isDay }.count > 40
@@ -574,6 +623,9 @@ final class MapModel: ObservableObject {
             let firstFocus = focus.contains(nodes[first].id)
             let secondFocus = focus.contains(nodes[second].id)
             if firstFocus != secondFocus { return firstFocus }
+            let firstIsALine = nodes[first].kind == .open
+            let secondIsALine = nodes[second].kind == .open
+            if firstIsALine != secondIsALine { return secondIsALine }
             if nodes[first].weight != nodes[second].weight { return nodes[first].weight > nodes[second].weight }
             return nodes[first].id < nodes[second].id
         }
@@ -590,11 +642,16 @@ final class MapModel: ObservableObject {
             // Nothing far outside the window needs a name.
             guard centre.x > -80, centre.x < size.width + 80, centre.y > -40, centre.y < size.height + 40 else { continue }
 
-            let textSize = labelSize(node.label, fontName: fontName)
+            let textSize = labelSize(node.mapLabel, fontName: fontName)
             let point = CGPoint(x: centre.x, y: centre.y + radii[index] + 5)
             let rect = CGRect(x: point.x - textSize.width / 2, y: point.y, width: textSize.width, height: textSize.height)
                 .insetBy(dx: -4, dy: -2)
             let isFocus = focus.contains(node.id)
+
+            // A sentence for a name gives way to the names already placed.
+            if node.kind == .open, !isFocus, taken.contains(where: { $0.intersects(rect) }) {
+                continue
+            }
 
             if crowded && !isFocus {
                 // Zoomed out on a crowded map, a thought that came up only once is not named.
@@ -624,7 +681,7 @@ final class MapModel: ObservableObject {
             }
 
             taken.append(rect)
-            placed.append(PlacedLabel(thoughtID: node.id, label: node.label, point: point, size: textSize, isFocus: (isFocus || isPickingAnotherThought) && hasFocus(node.id)))
+            placed.append(PlacedLabel(thoughtID: node.id, label: node.mapLabel, point: point, size: textSize, isFocus: (isFocus || isPickingAnotherThought) && hasFocus(node.id)))
         }
         return placed
     }
@@ -724,18 +781,30 @@ final class MapModel: ObservableObject {
             }
         }
 
+        // The days it was written about, the most recent first, each with what else the
+        // writer felt, told themselves and wanted that day.
+        let ownQuotes = Set(thought.evidence.map(\.quote))
+        let days = Self.days(from: thought.evidence.map { ($0.entryID, $0.date, $0.quote) })
+            .reversed()
+            .map { day -> MapDayQuotes in
+                var day = day
+                day.lines = taggedLines(for: day.entryID, leavingOut: ownQuotes, without: [.happened])
+                return day
+            }
+
         return MapThoughtDetail(
             id: id,
             label: thought.label,
             kind: thought.kind,
             aliases: thought.aliases,
+            counted: MemoryCounts.lines(for: thought, dayLines: dayLines),
             summary: thought.summary,
             firstSeen: thought.firstSeen,
             lastSeen: thought.lastSeen,
             shifts: thought.timeline
                 .sorted { ($0.date, $0.note) < ($1.date, $1.note) }
                 .map { MapThoughtDetail.Shift(date: $0.date, note: $0.note) },
-            days: Self.days(from: thought.evidence.map { ($0.entryID, $0.date, $0.quote) }),
+            days: Array(days),
             connections: connections
                 .map { MapThoughtDetail.Connection(thoughtID: $0.key, label: $0.value.label, reasons: $0.value.reasons, linkID: GraphEdge.id(id, $0.key)) }
                 .sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
@@ -755,7 +824,39 @@ final class MapModel: ObservableObject {
                 return MapDayDetail.Touched(thoughtID: thought.id, label: thought.label, kind: thought.kind, quotes: unique)
             }
             .sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
-        return MapDayDetail(entryID: entryID, date: date, summary: summaries[entryID], thoughts: touched)
+        return MapDayDetail(entryID: entryID, date: date, summary: summaries[entryID], lines: taggedLines(for: entryID), thoughts: touched)
+    }
+
+    /// The lines kept on a day, in a steady order (felt, told yourself, happened, wanted,
+    /// helped, still open), each with its small word. A line about something the user has
+    /// closed says "done" or "not doing it" in place of "still open".
+    private func taggedLines(for entryID: UUID, leavingOut: Set<String> = [], without kinds: Set<DayLine.Kind> = []) -> [MapTaggedLine] {
+        let order = DayLine.Kind.allCases
+        // The same line can be two things at once ("I said I needed to think about it" both
+        // happened and is still open). It is shown once, as the more telling of the two.
+        let telling: [DayLine.Kind] = [.stillOpen, .helped, .toldYourself, .wanted, .felt, .happened]
+        var best: [String: DayLine.Kind] = [:]
+        for line in dayLines[entryID] ?? [] {
+            if let current = best[line.quote], (telling.firstIndex(of: current) ?? 0) <= (telling.firstIndex(of: line.kind) ?? 0) {
+                continue
+            }
+            best[line.quote] = line.kind
+        }
+        return (dayLines[entryID] ?? [])
+            .filter { best[$0.quote] == $0.kind && !kinds.contains($0.kind) && !leavingOut.contains($0.quote) }
+            .enumerated()
+            .sorted { first, second in
+                let left = (order.firstIndex(of: first.element.kind) ?? 0, first.offset)
+                let right = (order.firstIndex(of: second.element.kind) ?? 0, second.offset)
+                return left < right
+            }
+            .map { _, line in
+                var tag = line.kind.tag
+                if line.kind == .stillOpen, let closed = pins.settled(forLine: MemoryApplier.openLabel(line.quote)) {
+                    tag = closed.tag
+                }
+                return MapTaggedLine(tag: tag, quote: line.quote, note: line.kind == .felt ? line.tone?.rawValue : nil)
+            }
     }
 
     /// How much is on the map, in a few words.

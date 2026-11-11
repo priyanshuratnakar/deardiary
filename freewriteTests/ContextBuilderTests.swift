@@ -179,7 +179,7 @@ import Testing
         #expect(!lines.isEmpty)
         #expect(lines.map(\.number) == Array(1...lines.count))
         for line in lines {
-            #expect(notes.contains("{\(line.number)} \(Prompts.longDay(line.date)), about \(line.label): \"\(line.quote)\""))
+            #expect(notes.contains("{\(line.number)} \(Prompts.longDay(line.date)), \(line.label): \"\(line.quote)\""))
         }
         let replaying = try #require(lines.first { $0.quote == "I keep replaying the call with Meera about the launch." })
         #expect(replaying.date == "2026-11-02")
@@ -189,6 +189,62 @@ import Testing
         #expect(!notes.contains("A colleague leading the launch"))
         #expect(!notes.contains("How it shifted"))
         #expect(!notes.contains("What those entries were about"))
+    }
+
+    @Test func whatTheyToldThemselvesOnThoseDaysIsOfferedToo() throws {
+        // Memory in the shape of a journal: the day's own lines are kept with each entry.
+        let read = try MemoryWeek.read()
+        let entry = newEntry("Meera wants an answer today and I still don't have one.")
+        let context = ContextBuilder.build(entry: entry, recentMessages: [], memory: read.memory, digests: read.digests)
+        let lines = Prompts.earlierLines(from: context)
+
+        // The line worth bringing up is often not the one that names the person.
+        let said = try #require(lines.first { $0.quote == "First time I haven't just said yes." })
+        #expect(said.date == "2026-11-06")
+        #expect(said.label == "what they told themselves, on a day they wrote about Meera")
+        let wanted = try #require(lines.first { $0.quote == "I think I already know I don't want the pricing page." })
+        #expect(wanted.label.hasPrefix("what they told themselves, on a day they wrote about "))
+        // One line from each day she was written about, so one day does not crowd out the others.
+        #expect(lines.filter { $0.label.hasSuffix("about Meera") }.map(\.date) == ["2026-11-02", "2026-11-06", "2026-11-08"])
+        #expect(lines.contains { $0.quote == "I don't even know what I was afraid of." })
+        // What happened is not offered: it is the least telling kind of line.
+        #expect(!lines.contains { $0.quote == "I said yes to everything she asked" })
+        // Each line is offered once, however many thoughts share its day.
+        #expect(Set(lines.map { $0.date + $0.quote }).count == lines.count)
+
+        let notes = Prompts.talkMemoryNotes(context)
+        #expect(notes.contains("Friday 6 November 2026, what they told themselves, on a day they wrote about Meera: \"First time I haven't just said yes.\""))
+        // The profile that goes with them is counted by the app.
+        #expect(notes.contains("Profile (background only):\nMost written about in the last month: Meera (3 entries)"))
+    }
+
+    @Test func theDaysLinesFromTheOpenEntryAreLeftOut() throws {
+        let read = try MemoryWeek.read()
+        // Sunday's entry is the one open on the page.
+        let entry = TalkEntry(id: MemoryWeek.sunday.id, text: MemoryWeek.sunday.text, date: MemoryWeek.sunday.startedAt)
+        let context = ContextBuilder.build(entry: entry, recentMessages: [], memory: read.memory, digests: read.digests)
+        let quotes = context.thoughts.flatMap(\.quotes).map(\.text)
+
+        #expect(!quotes.isEmpty)
+        #expect(!quotes.contains("Slept badly."))
+        #expect(!quotes.contains("I think I already know I don't want the pricing page."))
+        #expect(quotes.contains("First time I haven't just said yes."))
+    }
+
+    @Test func aLineSaysWhatItIsWhenItIsNotAboutAPersonOrTopic() {
+        func item(_ kind: ThoughtKind, _ label: String) -> TalkMemoryContext.Item {
+            TalkMemoryContext.Item(id: label, label: label, kind: kind, summary: "", quotes: [TalkMemoryContext.Quote(date: "2026-11-04", text: "A line about \(label).")], shifts: [], connections: [])
+        }
+        var context = TalkMemoryContext()
+        context.thoughts = [item(.person, "Ma"), item(.feeling, "tired"), item(.open, "Call Ma back"), item(.helped, "a run before work"), item(.theme, "Saying yes")]
+
+        #expect(Prompts.earlierLines(from: context).map(\.label) == [
+            "about Ma",
+            "a day they named feeling tired",
+            "something they said was still open",
+            "something they wrote had helped (a run before work)",
+            "about Saying yes",
+        ])
     }
 
     @Test func noThoughtCrowdsOutTheOthersAndALineIsOfferedOnce() {
@@ -230,7 +286,7 @@ import Testing
         #expect(system.contains("write its number in curly brackets"))
         #expect(system.contains("Never type out an earlier line yourself, and never state the day yourself."))
         #expect(system.contains("State nothing about their past that is not in these lines or the entry."))
-        #expect(system.contains("never recite it"))
+        #expect(system.contains("never recite them"))
         #expect(!system.contains("You cannot see their other entries."))
         // The safety behaviour is the same with memory as without.
         #expect(system.contains(Prompts.talkSafety))

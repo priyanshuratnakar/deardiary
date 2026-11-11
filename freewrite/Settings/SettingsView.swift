@@ -467,6 +467,9 @@ struct SettingsView: View {
 
     // MARK: - Memory
 
+    /// Shown while some entries are still kept the way memory was built before M14.
+    static let olderShapeLine = "Memory now keeps your own words in place of the AI's. Rebuild memory to bring earlier entries into the new shape."
+
     private var memorySection: some View {
         VStack(alignment: .leading, spacing: 8) {
             SettingsWordButton(
@@ -479,13 +482,21 @@ struct SettingsView: View {
                 confirmingForget = false
             }
 
-            Text("When memory is on, each entry is read once by the AI after you have finished with it, and what it learns is saved as notes in your memory folder. Talk works without it.")
+            Text("When memory is on, each entry is read once by the AI after you have finished with it, and what it finds is saved in your own words as notes in your memory folder. Talk works without it.")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             if let line = memoryLine {
                 Text(line)
+                    .font(.system(size: 13))
+                    .foregroundColor(bodyColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // Entries read before memory took the shape of a journal stay as they were until a rebuild.
+            if memoryStatus.summary.hasOlderShape, !memoryStatus.summary.isWorking {
+                Text(Self.olderShapeLine)
                     .font(.system(size: 13))
                     .foregroundColor(bodyColor)
                     .fixedSize(horizontal: false, vertical: true)

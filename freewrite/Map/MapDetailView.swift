@@ -98,13 +98,18 @@ struct MapDetailView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if let seen = seenLine(detail) {
-                Text(seen)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+        }
+
+        // What the app can say by counting. No model writes these lines.
+        if !detail.counted.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(detail.counted, id: \.self) { line in
+                    paragraph(line)
+                }
             }
         }
 
+        // A description in the AI's words: only a thought from before M14 has one.
         if !detail.summary.isEmpty {
             paragraph(detail.summary)
         }
@@ -121,7 +126,7 @@ struct MapDetailView: View {
         }
 
         if !detail.days.isEmpty {
-            section("What you wrote") {
+            section(detail.days.count == 1 ? "On that day" : "On those days") {
                 days(detail.days)
             }
         }
@@ -142,15 +147,8 @@ struct MapDetailView: View {
 
     private func kindLine(_ detail: MapThoughtDetail) -> String {
         detail.aliases.isEmpty
-            ? detail.kind.rawValue
-            : "\(detail.kind.rawValue) · also \(detail.aliases.joined(separator: ", "))"
-    }
-
-    private func seenLine(_ detail: MapThoughtDetail) -> String? {
-        guard let first = detail.firstSeen, let last = detail.lastSeen else { return nil }
-        return first == last
-            ? "Seen on \(Prompts.longDay(first))"
-            : "First seen \(Prompts.longDay(first)) · last seen \(Prompts.longDay(last))"
+            ? detail.kind.name
+            : "\(detail.kind.name) · also \(detail.aliases.joined(separator: ", "))"
     }
 
     // MARK: - Fixes for a thought
@@ -195,7 +193,43 @@ struct MapDetailView: View {
                 onConfirm: { run(.delete(id: detail.id)) }
             )
 
+        case .confirmingSettle(let id, let how) where id == detail.id:
+            confirmation(
+                how == .done
+                    ? "Mark this as done? It leaves the map. The line stays on its day, marked done."
+                    : "Not doing this after all? It leaves the map. The line stays on its day.",
+                confirm: how == .done ? "Done" : "Not doing it",
+                onConfirm: { run(.settle(id: detail.id, as: how, on: MemoryText.day(Date()))) }
+            )
+
         default:
+            if detail.kind == .open {
+                // Something still open is closed by the writer, not folded into something else.
+                HStack(spacing: 8) {
+                    MapWord(title: "Done", style: style) {
+                        model.pending = .confirmingSettle(detail.id, .done)
+                    }
+                    Text("•").foregroundColor(.gray)
+                    MapWord(title: "Not doing it", style: style) {
+                        model.pending = .confirmingSettle(detail.id, .dropped)
+                    }
+                    Text("•").foregroundColor(.gray)
+                    MapWord(title: "Rename", style: style) {
+                        draft = detail.label
+                        model.pending = .renaming(detail.id)
+                    }
+                    Text("•").foregroundColor(.gray)
+                    MapWord(title: "Delete", style: style) {
+                        model.pending = .confirmingDelete(detail.id)
+                    }
+                }
+            } else {
+                ordinaryFixes(detail)
+            }
+        }
+    }
+
+    private func ordinaryFixes(_ detail: MapThoughtDetail) -> some View {
             HStack(spacing: 8) {
                 MapWord(title: "Rename", style: style) {
                     draft = detail.label
@@ -215,7 +249,6 @@ struct MapDetailView: View {
                     model.pending = .confirmingDelete(detail.id)
                 }
             }
-        }
     }
 
     // MARK: - A link
@@ -280,12 +313,23 @@ struct MapDetailView: View {
                 Circle()
                     .fill(style.dayColor)
                     .frame(width: 8, height: 8)
-                small("day · touched \(detail.thoughts.count) \(detail.thoughts.count == 1 ? "thought" : "thoughts")")
+                small(detail.thoughts.isEmpty ? "day" : "day · touched \(detail.thoughts.count) \(detail.thoughts.count == 1 ? "thought" : "thoughts")")
             }
         }
 
+        // What the AI noted about the entry as a whole: only an entry read before M14 has this.
         if let summary = detail.summary, !summary.isEmpty {
             paragraph(summary)
+        }
+
+        if !detail.lines.isEmpty {
+            section("In your words") {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(detail.lines.enumerated()), id: \.offset) { _, line in
+                        tagged(line)
+                    }
+                }
+            }
         }
 
         if !detail.thoughts.isEmpty {
@@ -384,7 +428,31 @@ struct MapDetailView: View {
                 ForEach(Array(day.quotes.enumerated()), id: \.offset) { _, quote in
                     paragraph("“\(quote)”")
                 }
+                ForEach(Array(day.lines.enumerated()), id: \.offset) { _, line in
+                    tagged(line)
+                }
             }
+        }
+    }
+
+    /// One of the writer's own lines with the small word that says what it is: felt, told
+    /// yourself, wanted. A feeling also says whether it was pleasant.
+    private func tagged(_ line: MapTaggedLine) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(line.tag)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .frame(width: 74, alignment: .leading)
+            (Text("“\(line.quote)”")
+                .font(.custom(style.fontName, size: 14))
+                .foregroundColor(style.bodyColor)
+             + Text(line.note.map { "  " + $0 } ?? "")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary))
+                .lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
         }
     }
 

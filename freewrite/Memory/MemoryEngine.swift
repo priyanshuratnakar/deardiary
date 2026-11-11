@@ -19,6 +19,13 @@
 //  is never sent twice. Failures are quiet: they show as one line in Settings
 //  and are tried again later.
 //
+//  Since M14 a reading is a plain list of what is in the entry, in the
+//  writer's own words. The engine keeps those lines on the day (in the entry's
+//  digest), lets MemoryApplier decide what becomes a thought, counts which
+//  feelings have been named twice (FeelingDots), and writes the profile from
+//  counts (MemoryCounts). Entries read before M14 keep their old digests
+//  until memory is rebuilt; Settings says so.
+//
 
 import Foundation
 import CryptoKit
@@ -38,6 +45,8 @@ struct MemorySummary: Equatable {
     var problem: String? = nil
     /// What the last weekly tidy did, in one line, or nil if there has not been one.
     var lastTidy: String? = nil
+    /// True when some entries were read before M14 and are still kept in the old shape.
+    var hasOlderShape = false
 }
 
 /// Published on the main thread for the Settings window.
@@ -210,7 +219,9 @@ actor MemoryEngine {
     func refreshStatus() async {
         guard !isRunning else { return }
         summary.thoughts = env.store.loadSnapshot().thoughts.count
-        summary.digestedEntries = env.store.loadAllDigests().filter { !$0.failed }.count
+        let digests = env.store.loadAllDigests()
+        summary.digestedEntries = digests.filter { !$0.failed }.count
+        summary.hasOlderShape = digests.contains { !$0.failed && !$0.isJournalShaped }
         summary.lastTidy = env.defaults.string(forKey: TidyKey.line)
         await publish()
     }
@@ -228,6 +239,7 @@ actor MemoryEngine {
         guard MemoryFixes.apply(fix, to: &memory, pins: &pins) else {
             return false
         }
+        memory.profile = MemoryCounts.profile(memory: memory, today: MemoryText.day(env.now()))
         do {
             // The fixes file first: if the notes could not be written, the fix is
             // still on record and is applied the next time memory changes.
@@ -251,8 +263,8 @@ actor MemoryEngine {
         static let line = "memory.tidy.line"
     }
 
-    /// Looks across all of memory: merges duplicates, retires one-offs, adds patterns
-    /// that only show across weeks, and refreshes the profile. One request.
+    /// Looks across all of memory: merges thoughts that are the same thing under two
+    /// names, and retires people and topics that came up once and never returned. One request.
     ///
     /// Without `force` it only runs when a week has passed since the last tidy and
     /// memory holds enough thoughts to be worth it. Returns nil if it did not run.
@@ -292,12 +304,7 @@ actor MemoryEngine {
             model: env.model(),
             system: Prompts.tidySystem,
             messages: [
-                LLMMessage(role: .user, text: Prompts.tidyMessage(
-                    profile: memory.profile,
-                    thoughts: Array(memory.thoughts.values),
-                    recentDigests: env.store.loadAllDigests(),
-                    today: now
-                )),
+                LLMMessage(role: .user, text: Prompts.tidyMessage(thoughts: Array(memory.thoughts.values), today: now)),
             ],
             maxTokens: AILimits.tidyMaxTokens,
             retryIfDeclined: true,
@@ -330,27 +337,15 @@ actor MemoryEngine {
         let current = env.store.loadSnapshot()
         let pins = env.store.loadPins()
         var updated = current
-        var texts: [UUID: DigestedEntry?] = [:]
-        let files = Dictionary((env.journal.entryFiles() ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
         let outcome = MemoryTidier.apply(
             result,
             to: &updated,
             pins: pins,
-            entry: { id in
-                if let known = texts[id] {
-                    return known
-                }
-                var found: DigestedEntry? = nil
-                if let file = files[id], let text = self.env.journal.text(of: file) {
-                    found = DigestedEntry(id: id, date: MemoryText.day(file.startedAt), text: text)
-                }
-                texts[id] = found
-                return found
-            },
             today: MemoryText.day(now),
             rules: MemoryTidier.Rules(oneOffAfterDays: env.limits.oneOffAfterDays)
         )
+        updated.profile = MemoryCounts.profile(memory: updated, today: MemoryText.day(now))
 
         do {
             try env.store.write(updated, replacing: current)
@@ -409,8 +404,8 @@ actor MemoryEngine {
         // 1. Entries that were deleted take their lines out of memory with them.
         let present = Set(files.map(\.id))
         for (entryID, digest) in digests where !present.contains(entryID) {
-            forget(entryID: entryID, wasDigested: !digest.failed, memory: &memory)
             digests[entryID] = nil
+            forget(entryID: entryID, wasDigested: !digest.failed, memory: &memory, remaining: Array(digests.values))
         }
 
         // 2. Find the entries that need digesting.
@@ -432,8 +427,8 @@ actor MemoryEngine {
             guard env.journal.isDigestible(text, file: file) else {
                 // Emptied, or turned into a video entry: nothing of it stays in memory.
                 if let known {
-                    forget(entryID: file.id, wasDigested: !known.failed, memory: &memory)
                     digests[file.id] = nil
+                    forget(entryID: file.id, wasDigested: !known.failed, memory: &memory, remaining: Array(digests.values))
                 }
                 continue
             }
@@ -485,8 +480,7 @@ actor MemoryEngine {
                 system: Prompts.digestSystem,
                 messages: [
                     LLMMessage(role: .user, text: Prompts.digestMessage(
-                        profile: memory.profile,
-                        thoughts: Array(memory.thoughts.values),
+                        index: MemoryIndex(memory: memory, digests: Array(digests.values)),
                         entryDate: item.file.startedAt,
                         entryText: item.text
                     )),
@@ -547,15 +541,25 @@ actor MemoryEngine {
 
             if let result {
                 let outcome = MemoryApplier.apply(result, for: entry, to: &updated, pins: pins)
-                record.summary = MemoryText.singleLine(result.summary)
+                record.lines = outcome.lines
                 record.thoughts = outcome.touched
-                record.openLoops = result.openLoops.map(MemoryText.singleLine).filter { !$0.isEmpty }
+                record.openLoops = outcome.lines.filter { $0.kind == .stillOpen }.map(\.quote)
                 record.rejected = outcome.rejected
             } else {
                 MemoryApplier.remove(entryID: entry.id, from: &updated)
                 record.failed = true
                 record.failureReason = unusableBecause
             }
+
+            // A feeling named in the same words on two days is a thought. That is counted
+            // across every day's lines, this entry's included.
+            var everyDay = digests
+            everyDay[entry.id] = record
+            FeelingDots.reconcile(&updated, with: Array(everyDay.values), pins: pins)
+            if !record.failed {
+                record.thoughts = Array(Set(record.thoughts + FeelingDots.touched(by: entry.id, in: updated))).sorted()
+            }
+            updated.profile = MemoryCounts.profile(memory: updated, today: MemoryText.day(env.now()))
 
             do {
                 try env.store.write(updated, replacing: current)
@@ -579,15 +583,19 @@ actor MemoryEngine {
         }
 
         summary.isWorking = false
+        summary.hasOlderShape = digests.values.contains { !$0.failed && !$0.isJournalShaped }
         await publish()
         return .finished(digested: digested)
     }
 
     /// Takes one entry's lines out of memory and removes its digest.
-    private func forget(entryID: UUID, wasDigested: Bool, memory: inout MemorySnapshot) {
+    /// - Parameter remaining: the digests of the entries that are still there.
+    private func forget(entryID: UUID, wasDigested: Bool, memory: inout MemorySnapshot, remaining: [EntryDigest]) {
         if wasDigested {
             var updated = memory
             MemoryApplier.remove(entryID: entryID, from: &updated)
+            FeelingDots.reconcile(&updated, with: remaining, pins: env.store.loadPins())
+            updated.profile = MemoryCounts.profile(memory: updated, today: MemoryText.day(env.now()))
             if (try? env.store.write(updated, replacing: memory)) != nil {
                 memory = updated
             }

@@ -13,67 +13,20 @@ import Testing
 
 /// Builds the JSON a tidy reply is made of.
 enum TidyJSON {
-    static func quote(_ entry: MemoryWeek.Entry, _ text: String) -> [String: Any] {
-        ["entry_id": entry.id.uuidString, "quote": text]
-    }
-
-    static func reply(
-        merges: [[String: Any]] = [],
-        retire: [String] = [],
-        patterns: [[String: Any]] = [],
-        links: [[String: Any]] = [],
-        profile: String? = nil
-    ) -> String {
-        let object: [String: Any] = [
-            "merges": merges,
-            "retire": retire,
-            "patterns": patterns,
-            "links": links,
-            "profile": profile ?? NSNull(),
-        ]
+    static func reply(merges: [[String: Any]] = [], retire: [String] = []) -> String {
+        let object: [String: Any] = ["merges": merges, "retire": retire]
         let data = try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
         return String(data: data, encoding: .utf8)!
     }
-
-    /// A pattern and a link that each rest on lines from two different entries.
-    static let sleepPattern: [String: Any] = [
-        "label": "Sleep follows what is unresolved",
-        "kind": "theme",
-        "summary": "Bad nights tend to follow something left open with Meera.",
-        "evidence": [quote(MemoryWeek.monday, "Couldn't sleep again."), quote(MemoryWeek.sunday, "Slept badly.")],
-    ]
-
-    static let meeraSleepLink: [String: Any] = [
-        "from": "meera",
-        "to": "trouble-sleeping",
-        "reason": "unsettles",
-        "evidence": [
-            quote(MemoryWeek.monday, "I keep replaying the call with Meera about the launch."),
-            quote(MemoryWeek.sunday, "I kept drafting the reply to Meera in my head"),
-        ],
-    ]
 }
 
 @Suite struct TidyParserTests {
 
     @Test func readsAFullReply() throws {
-        let reply = TidyJSON.reply(
-            merges: [["from": "people-pleasing", "into": "saying-yes-under-pressure"]],
-            retire: ["arjun"],
-            patterns: [TidyJSON.sleepPattern],
-            links: [TidyJSON.meeraSleepLink],
-            profile: "They are steadier this week."
-        )
+        let result = try TidyParser.parse(TidyJSON.reply(merges: [["from": "pricing", "into": "the-pricing-page"]], retire: ["arjun"]))
 
-        let result = try TidyParser.parse(reply)
-
-        #expect(result.merges == [TidyResult.Merge(from: "people-pleasing", into: "saying-yes-under-pressure")])
+        #expect(result.merges == [TidyResult.Merge(from: "pricing", into: "the-pricing-page")])
         #expect(result.retire == ["arjun"])
-        #expect(result.patterns.first?.kind == .theme)
-        #expect(result.patterns.first?.evidence.count == 2)
-        #expect(result.links.first?.reason == "unsettles")
-        #expect(result.links.first?.evidence.first?.entryID == MemoryWeek.monday.id.uuidString)
-        #expect(result.profile == "They are steadier this week.")
     }
 
     @Test func readsAnEmptyButValidReply() throws {
@@ -83,12 +36,13 @@ enum TidyJSON {
     @Test(arguments: [
         "not json",
         "{}",
-        "{\"merges\":[],\"retire\":[],\"patterns\":[],\"links\":[]}",
-        "{\"merges\":[],\"retire\":[],\"patterns\":[],\"links\":[],\"profile\":null,\"mood\":\"low\"}",
-        "{\"merges\":[{\"from\":\"a\"}],\"retire\":[],\"patterns\":[],\"links\":[],\"profile\":null}",
-        "{\"merges\":[],\"retire\":[7],\"patterns\":[],\"links\":[],\"profile\":null}",
-        "{\"merges\":[],\"retire\":[],\"patterns\":[{\"label\":\"x\",\"kind\":\"diagnosis\",\"summary\":\"s\",\"evidence\":[]}],\"links\":[],\"profile\":null}",
-        "{\"merges\":[],\"retire\":[],\"patterns\":[],\"links\":[{\"from\":\"a\",\"to\":\"b\",\"reason\":\"r\",\"evidence\":[{\"quote\":\"q\"}]}],\"profile\":null}",
+        "{\"merges\":[]}",
+        "{\"merges\":[],\"retire\":[],\"mood\":\"low\"}",
+        "{\"merges\":[{\"from\":\"a\"}],\"retire\":[]}",
+        "{\"merges\":[],\"retire\":[7]}",
+        // The tidy no longer names patterns or writes a profile, and a reply that tries to is refused.
+        "{\"merges\":[],\"retire\":[],\"patterns\":[],\"links\":[],\"profile\":null}",
+        "{\"merges\":[],\"retire\":[],\"profile\":\"They tend to agree too fast.\"}",
     ])
     func refusesAnythingThatIsNotExactlyTheExpectedShape(reply: String) {
         #expect(throws: DigestParseError.self) {
@@ -99,7 +53,7 @@ enum TidyJSON {
     @Test func theSchemaMatchesWhatTheParserExpects() throws {
         let schema = try #require(try JSONSerialization.jsonObject(with: TidySchema.data) as? [String: Any])
         let properties = try #require(schema["properties"] as? [String: Any])
-        #expect(Set(properties.keys) == ["merges", "retire", "patterns", "links", "profile"])
+        #expect(Set(properties.keys) == ["merges", "retire"])
 
         var objectsChecked = 0
         func check(_ node: Any) {
@@ -114,18 +68,18 @@ enum TidyJSON {
         }
         check(schema)
 
-        // The reply, a merge, a pattern, a link, and the quote inside a pattern and inside a link.
-        #expect(objectsChecked == 6)
+        // The reply and a merge.
+        #expect(objectsChecked == 2)
+    }
+
+    @Test func theInstructionsAskForNothingInTheAIsOwnWords() {
+        #expect(!Prompts.tidySystem.contains("pattern"))
+        #expect(!Prompts.tidySystem.contains("profile"))
+        #expect(Prompts.tidySystem.contains("Never merge two different people."))
     }
 }
 
 @Suite struct MemoryTidierTests {
-
-    private let lateNovember = "2026-11-30"
-
-    private func entry(_ id: UUID) -> DigestedEntry? {
-        MemoryWeek.entries.first { $0.id == id }.map(MemoryWeek.digested)
-    }
 
     private func tidy(
         _ reply: String,
@@ -133,17 +87,16 @@ enum TidyJSON {
         pins: Pins = Pins(),
         today: String = "2026-11-30"
     ) throws -> MemoryTidier.Outcome {
-        MemoryTidier.apply(try TidyParser.parse(reply), to: &memory, pins: pins, entry: entry, today: today)
+        MemoryTidier.apply(try TidyParser.parse(reply), to: &memory, pins: pins, today: today)
     }
 
-    /// The week's memory plus a thought that duplicates "Saying yes under pressure".
+    /// The week's memory plus a topic that is the pricing page under another name.
     private func weekWithADuplicate() throws -> MemorySnapshot {
-        var memory = try MemoryWeek.built().memory
-        memory.thoughts["people-pleasing"] = Thought(
-            id: "people-pleasing",
-            label: "People pleasing",
-            kind: .theme,
-            summary: "Putting what others want first.",
+        var memory = try MemoryWeek.read().memory
+        memory.thoughts["pricing"] = Thought(
+            id: "pricing",
+            label: "pricing",
+            kind: .topic,
             evidence: [Evidence(entryID: MemoryWeek.sunday.id, date: "2026-11-08", quote: "Need to tell her by Tuesday.")]
         )
         return memory
@@ -154,13 +107,13 @@ enum TidyJSON {
     @Test func aDuplicateIsFoldedIntoTheThoughtItRepeats() throws {
         var memory = try weekWithADuplicate()
 
-        let outcome = try tidy(TidyJSON.reply(merges: [["from": "people-pleasing", "into": "saying-yes-under-pressure"]]), &memory)
+        let outcome = try tidy(TidyJSON.reply(merges: [["from": "pricing", "into": "the-pricing-page"]]), &memory)
 
         #expect(outcome.merged == 1)
         #expect(outcome.rejected.isEmpty)
-        #expect(memory.thoughts["people-pleasing"] == nil)
-        let kept = try #require(memory.thoughts["saying-yes-under-pressure"])
-        #expect(kept.aliases.contains("People pleasing"))
+        #expect(memory.thoughts["pricing"] == nil)
+        let kept = try #require(memory.thoughts["the-pricing-page"])
+        #expect(kept.aliases.contains("pricing"))
         #expect(kept.evidence.map(\.quote).contains("Need to tell her by Tuesday."))
         #expect(outcome.line == "merged 1")
     }
@@ -168,11 +121,11 @@ enum TidyJSON {
     @Test func aMergeIsRefusedWhenItMakesNoSenseOrTouchesAThoughtTheUserRenamed() throws {
         var memory = try weekWithADuplicate()
         var pins = Pins()
-        MemoryFixes.apply(.rename(id: "people-pleasing", to: "Putting others first"), to: &memory, pins: &pins)
+        MemoryFixes.apply(.rename(id: "pricing", to: "What we charge"), to: &memory, pins: &pins)
         let before = memory
 
         let outcome = try tidy(TidyJSON.reply(merges: [
-            ["from": "people-pleasing", "into": "saying-yes-under-pressure"],
+            ["from": "pricing", "into": "the-pricing-page"],
             ["from": "meera", "into": "meera"],
             ["from": "made-up", "into": "meera"],
         ]), &memory, pins: pins)
@@ -186,153 +139,93 @@ enum TidyJSON {
         #expect(memory == before)
     }
 
+    @Test func aPersonIsNeverFoldedIntoATopicAndOpenThingsAreLeftAlone() throws {
+        var memory = try MemoryWeek.read().memory
+        let before = memory
+
+        let outcome = try tidy(TidyJSON.reply(merges: [
+            ["from": "arjun", "into": "the-friday-review"],
+            ["from": "the-launch", "into": "meera"],
+            ["from": "need-to-tell-her-by-tuesday", "into": "the-pricing-page"],
+            ["from": "the-pricing-page", "into": "i-said-i-needed-to-think-about-it"],
+        ]), &memory)
+
+        #expect(outcome.merged == 0)
+        #expect(outcome.rejected.map(\.reason) == [
+            "A person is not folded into something that is not a person.",
+            "A person is not folded into something that is not a person.",
+            "Feelings and open things are left as you wrote them.",
+            "Feelings and open things are left as you wrote them.",
+        ])
+        #expect(memory == before)
+    }
+
     // MARK: - One-offs
 
     @Test func onlyRealOneOffsAreRetiredWhateverTheModelSuggests() throws {
-        var memory = try MemoryWeek.built().memory
+        var memory = try MemoryWeek.read().memory
 
-        // "Running" and "Arjun" were each seen once, on 4 November. "Meera" recurs.
-        let outcome = try tidy(TidyJSON.reply(retire: ["running", "arjun", "meera", "nothing-like-this"]), &memory)
+        // "Arjun" and "the Friday review" were each seen once, on 4 November. "Meera" recurs.
+        let outcome = try tidy(TidyJSON.reply(retire: ["the-friday-review", "arjun", "meera", "nothing-like-this"]), &memory)
 
         #expect(outcome.retired == 2)
-        #expect(memory.thoughts["running"] == nil)
+        #expect(memory.thoughts["the-friday-review"] == nil)
         #expect(memory.thoughts["arjun"] == nil)
         #expect(memory.thoughts["meera"] != nil)
         #expect(outcome.rejected.map(\.reason) == ["It is not a one-off.", "It named a thought that is not in memory."])
+        #expect(outcome.line == "retired 2")
+    }
+
+    @Test func whatHelpedAndWhatIsStillOpenAreKeptEvenWhenSeenOnce() throws {
+        var memory = try MemoryWeek.read().memory
+
+        let outcome = try tidy(TidyJSON.reply(retire: ["a-run-before-work", "need-to-tell-her-by-tuesday"]), &memory)
+
+        #expect(outcome.retired == 0)
+        #expect(memory.thoughts["a-run-before-work"] != nil)
+        #expect(memory.thoughts["need-to-tell-her-by-tuesday"] != nil)
+        #expect(outcome.rejected.allSatisfy { $0.reason == "It is kept even when seen once." })
     }
 
     @Test func aRecentOneOffIsKeptBecauseItMayStillReturn() throws {
-        var memory = try MemoryWeek.built().memory
+        var memory = try MemoryWeek.read().memory
 
         // Ten days after it was written is too soon.
-        let outcome = try tidy(TidyJSON.reply(retire: ["running"]), &memory, today: "2026-11-14")
+        let outcome = try tidy(TidyJSON.reply(retire: ["arjun"]), &memory, today: "2026-11-14")
 
         #expect(outcome.retired == 0)
-        #expect(memory.thoughts["running"] != nil)
+        #expect(memory.thoughts["arjun"] != nil)
         #expect(outcome.rejected.map(\.reason) == ["It is not a one-off."])
     }
 
     @Test func aOneOffTheUserRenamedOrLinkedIsNeverRetired() throws {
-        var memory = try MemoryWeek.built().memory
+        var memory = try MemoryWeek.read().memory
         var pins = Pins()
-        MemoryFixes.apply(.rename(id: "running", to: "Morning runs"), to: &memory, pins: &pins)
+        MemoryFixes.apply(.rename(id: "the-friday-review", to: "Friday reviews"), to: &memory, pins: &pins)
         MemoryFixes.apply(.addLink(from: "arjun", to: "meera", reason: "works with"), to: &memory, pins: &pins)
 
-        let outcome = try tidy(TidyJSON.reply(retire: ["running", "arjun"]), &memory, pins: pins)
+        let outcome = try tidy(TidyJSON.reply(retire: ["the-friday-review", "arjun"]), &memory, pins: pins)
 
         #expect(outcome.retired == 0)
-        #expect(memory.thoughts["running"]?.label == "Morning runs")
+        #expect(memory.thoughts["the-friday-review"]?.label == "Friday reviews")
         #expect(memory.thoughts["arjun"] != nil)
         #expect(outcome.rejected.allSatisfy { $0.reason == "You renamed or linked this thought." })
     }
 
-    // MARK: - Patterns and links across weeks
-
-    @Test func aPatternNeedsLinesFromTwoEntriesAndKeepsTheEntriesOwnWords() throws {
+    @Test func aMemoryBuiltBeforeM14IsTidiedTheSameWay() throws {
         var memory = try MemoryWeek.built().memory
 
-        let outcome = try tidy(TidyJSON.reply(patterns: [TidyJSON.sleepPattern]), &memory)
-
-        #expect(outcome.patterns == 1)
-        let pattern = try #require(memory.thoughts["sleep-follows-what-is-unresolved"])
-        #expect(pattern.kind == .theme)
-        #expect(pattern.evidence == [
-            Evidence(entryID: MemoryWeek.monday.id, date: "2026-11-02", quote: "Couldn’t sleep again."),
-            Evidence(entryID: MemoryWeek.sunday.id, date: "2026-11-08", quote: "Slept badly."),
-        ])
-    }
-
-    @Test func aPatternWithLinesFromOneEntryOrInventedLinesIsRefused() throws {
-        var memory = try MemoryWeek.built().memory
-        let before = memory
-        let oneEntry: [String: Any] = [
-            "label": "Mondays are hard", "kind": "theme", "summary": "s",
-            "evidence": [TidyJSON.quote(MemoryWeek.monday, "Couldn't sleep again."), TidyJSON.quote(MemoryWeek.monday, "I said yes to everything she asked")],
-        ]
-        let invented: [String: Any] = [
-            "label": "Dread of Mondays", "kind": "feeling", "summary": "s",
-            "evidence": [TidyJSON.quote(MemoryWeek.monday, "Couldn't sleep again."), TidyJSON.quote(MemoryWeek.sunday, "I dread every Monday morning.")],
-        ]
-        let wrongEntry: [String: Any] = [
-            "label": "Coffee", "kind": "idea", "summary": "s",
-            "evidence": [TidyJSON.quote(MemoryWeek.monday, "Too much coffee"), ["entry_id": UUID().uuidString, "quote": "Too much coffee"]],
-        ]
-
-        let outcome = try tidy(TidyJSON.reply(patterns: [oneEntry, invented, wrongEntry]), &memory)
-
-        #expect(outcome.patterns == 0)
-        #expect(outcome.rejected.count == 3)
-        #expect(outcome.rejected.allSatisfy { $0.item == "pattern" && $0.reason == "It needs quoted lines from at least 2 entries." })
-        #expect(memory == before)
-    }
-
-    @Test func aPatternThatAlreadyHasAThoughtAddsToItInsteadOfMakingAnother() throws {
-        var memory = try MemoryWeek.built().memory
-        var pattern = TidyJSON.sleepPattern
-        pattern["label"] = "TROUBLE sleeping!"
-
-        let outcome = try tidy(TidyJSON.reply(patterns: [pattern]), &memory)
-
-        #expect(outcome.patterns == 1)
-        #expect(memory.thoughts.count == 7)
-        #expect(memory.thoughts["trouble-sleeping"]?.evidence.count == 3)
-    }
-
-    @Test func aLinkAcrossWeeksIsAddedWithEachLineItRestsOn() throws {
-        var memory = try MemoryWeek.built().memory
-
-        let outcome = try tidy(TidyJSON.reply(links: [TidyJSON.meeraSleepLink]), &memory)
-
-        #expect(outcome.links == 1)
-        let links = try #require(memory.thoughts["meera"]?.links.filter { $0.target == "trouble-sleeping" })
-        #expect(links.map(\.date) == ["2026-11-02", "2026-11-08"])
-        #expect(links.allSatisfy { $0.reason == "unsettles" })
-    }
-
-    @Test func aLinkTheUserRemovedOrOneWithThinEvidenceIsRefused() throws {
-        var memory = try MemoryWeek.built().memory
-        var pins = Pins()
-        pins.linksRemoved = [Pins.LinkPin(from: "trouble-sleeping", to: "meera", reason: nil)]
-        var thin = TidyJSON.meeraSleepLink
-        thin["to"] = "the-launch"
-        thin["evidence"] = [TidyJSON.quote(MemoryWeek.monday, "I keep replaying the call with Meera about the launch.")]
-
-        let outcome = try tidy(TidyJSON.reply(links: [TidyJSON.meeraSleepLink, thin]), &memory, pins: pins)
-
-        #expect(outcome.links == 0)
-        #expect(outcome.rejected.map(\.reason) == ["You removed this link.", "It needs quoted lines from at least 2 entries."])
-        #expect(memory.thoughts["meera"]?.links.isEmpty == true)
-    }
-
-    @Test func aDeletedThoughtDoesNotComeBackAsAPattern() throws {
-        var memory = try MemoryWeek.built().memory
-        var pins = Pins()
-        MemoryFixes.apply(.delete(id: "trouble-sleeping"), to: &memory, pins: &pins)
-        var pattern = TidyJSON.sleepPattern
-        pattern["label"] = "Trouble sleeping"
-
-        let outcome = try tidy(TidyJSON.reply(patterns: [pattern]), &memory, pins: pins)
-
-        #expect(outcome.patterns == 0)
-        #expect(memory.thoughts["trouble-sleeping"] == nil)
-        #expect(outcome.rejected == [EntryDigest.Rejection(item: "pattern", reason: "You deleted this thought.")])
-    }
-
-    // MARK: - Profile and summary
-
-    @Test func theProfileIsRefreshedAndTheSummaryLineSaysWhatHappened() throws {
-        var memory = try weekWithADuplicate()
-
+        // "Running" (an idea) and "Arjun" were each seen once; the older kinds are not special.
         let outcome = try tidy(TidyJSON.reply(
-            merges: [["from": "people-pleasing", "into": "saying-yes-under-pressure"]],
-            retire: ["running"],
-            patterns: [TidyJSON.sleepPattern],
-            links: [TidyJSON.meeraSleepLink],
-            profile: "They are steadier this week."
+            merges: [["from": "the-pricing-page", "into": "the-launch"]],
+            retire: ["running", "arjun", "meera"]
         ), &memory)
 
-        #expect(memory.profile == "They are steadier this week.")
-        #expect(outcome.line == "merged 1, retired 1, 1 pattern across weeks, 1 new link, refreshed the profile")
+        #expect(outcome.merged == 1)
+        #expect(outcome.retired == 2)
+        #expect(memory.thoughts["the-pricing-page"] == nil)
+        #expect(memory.thoughts["running"] == nil)
+        #expect(outcome.line == "merged 1, retired 2")
         #expect(MemoryTidier.Outcome().line == "nothing needed changing")
     }
 }
@@ -343,15 +236,18 @@ enum TidyJSON {
         await MainActor.run { engine.status.summary }
     }
 
-    /// A sandbox with the made-up week already in memory.
-    private func weekSandbox() throws -> MemorySandbox {
+    /// A sandbox with the made-up week already in memory, in the shape of a journal.
+    private func weekSandbox(without dropped: String? = nil) throws -> MemorySandbox {
         let sandbox = MemorySandbox()
         for entry in MemoryWeek.entries {
             sandbox.writeEntry(entry)
         }
-        let built = try MemoryWeek.built()
-        try sandbox.store.write(built.memory, replacing: MemorySnapshot())
-        for digest in built.digests {
+        var read = try MemoryWeek.read()
+        if let dropped {
+            read.memory.thoughts[dropped] = nil
+        }
+        try sandbox.store.write(read.memory, replacing: MemorySnapshot())
+        for digest in read.digests {
             try sandbox.store.saveDigest(digest)
         }
         return sandbox
@@ -366,13 +262,12 @@ enum TidyJSON {
     @Test func aTidyOnRequestSendsAllOfMemoryOnceAndAppliesTheResult() async throws {
         let sandbox = try weekSandbox()
         sandbox.clock = MemoryWeek.day(30)
-        let provider = FakeProvider([.reply([TidyJSON.reply(retire: ["running"], patterns: [TidyJSON.sleepPattern], profile: "They are steadier this week.")])])
+        let provider = FakeProvider([.reply([TidyJSON.reply(retire: ["arjun"])])])
         let engine = sandbox.engine(provider, limits: lowBar)
 
         let outcome = await engine.tidy(force: true)
 
         #expect(outcome?.retired == 1)
-        #expect(outcome?.patterns == 1)
         #expect(provider.requests.count == 1)
 
         let request = try #require(provider.requests.first)
@@ -380,18 +275,25 @@ enum TidyJSON {
         #expect(request.jsonSchema == TidySchema.data)
         #expect(request.model == "model-for-memory")
         let message = try #require(request.messages.first?.text)
-        #expect(message.contains("- meera | Meera | person | - | 3 | 2026-11-02 | 2026-11-08 |"))
-        #expect(message.contains("quote [\(MemoryWeek.monday.id.uuidString)] 2026-11-02: \"I keep replaying the call with Meera about the launch.\""))
-        #expect(message.contains("linked to meera (asked for by), 2026-11-06"))
-        #expect(message.contains("- 2026-11-08 [\(MemoryWeek.sunday.id.uuidString)]: A bad night"))
+        #expect(message.hasPrefix("Today is Monday 30 November 2026."))
+        #expect(message.contains("- meera | Meera | person | - | 3 | 2026-11-02 | 2026-11-08"))
+        #expect(message.contains("    2026-11-02: \"the call with Meera\""))
+        #expect(message.contains("- need-to-tell-her-by-tuesday | Need to tell her by Tuesday | still open | - | 1 | 2026-11-08 | 2026-11-08"))
+        #expect(message.contains("- a-run-before-work | a run before work | what helped |"))
+        // Nothing in the AI's words about the writer goes with it, because there is none.
+        #expect(!message.contains("Profile"))
 
         let memory = sandbox.store.loadSnapshot()
-        #expect(memory.thoughts["running"] == nil)
-        #expect(memory.thoughts["sleep-follows-what-is-unresolved"] != nil)
-        #expect(memory.profile == "They are steadier this week.")
+        #expect(memory.thoughts["arjun"] == nil)
+        // The profile is counted by the app, not written by the model.
+        #expect(memory.profile == """
+        Most written about in the last month: Meera (3 entries), the launch (2 entries), the pricing page (2 entries).
+        Still open: 2 things, the oldest since Friday 6 November 2026.
+        They wrote that these helped: a run before work.
+        """)
 
         let status = await summary(of: engine)
-        #expect(status.lastTidy == "Tidied on Monday 30 November 2026: retired 1, 1 pattern across weeks, refreshed the profile.")
+        #expect(status.lastTidy == "Tidied on Monday 30 November 2026: retired 1.")
         #expect(status.isWorking == false)
         #expect(status.thoughts == 7)
     }
@@ -422,11 +324,12 @@ enum TidyJSON {
     }
 
     @Test func itWaitsUntilMemoryHoldsEnoughThoughts() async throws {
-        let sandbox = try weekSandbox()
+        // The app's own bar is eight thoughts; here memory holds seven.
+        let sandbox = try weekSandbox(without: "arjun")
         let provider = FakeProvider()
-        // The app's own bar is eight thoughts; the made-up week has seven.
         let engine = sandbox.engine(provider)
 
+        #expect(sandbox.store.loadSnapshot().thoughts.count == 7)
         #expect(await engine.tidy() == nil)
         sandbox.clock = sandbox.clock.addingTimeInterval(30 * 24 * 3600)
         #expect(await engine.tidy() == nil)
@@ -464,7 +367,8 @@ enum TidyJSON {
 
     @Test func noNetworkShowsOneLineAndLeavesTheTidyDue() async throws {
         let sandbox = try weekSandbox()
-        let provider = FakeProvider([.fail(.offline), .reply([TidyJSON.reply(profile: "They are steadier this week.")])])
+        sandbox.clock = MemoryWeek.day(30)
+        let provider = FakeProvider([.fail(.offline), .reply([TidyJSON.reply(retire: ["arjun"])])])
         let engine = sandbox.engine(provider, limits: lowBar)
 
         #expect(await engine.tidy(force: true) == nil)
@@ -473,7 +377,7 @@ enum TidyJSON {
 
         #expect(await engine.tidy(force: true) != nil)
         #expect(await summary(of: engine).problem == nil)
-        #expect(sandbox.store.loadSnapshot().profile == "They are steadier this week.")
+        #expect(sandbox.store.loadSnapshot().thoughts["arjun"] == nil)
     }
 
     @Test func aRebuildEndsWithATidy() async throws {
@@ -501,15 +405,15 @@ enum TidyJSON {
     @Test func theTidyObeysFixesMadeWhileItWasRunning() async throws {
         let sandbox = try weekSandbox()
         sandbox.clock = MemoryWeek.day(30)
-        let provider = FakeProvider([.reply([TidyJSON.reply(patterns: [TidyJSON.sleepPattern], links: [TidyJSON.meeraSleepLink])])])
+        let provider = FakeProvider([.reply([TidyJSON.reply(merges: [["from": "the-friday-review", "into": "the-launch"]], retire: ["arjun"])])])
         let store = sandbox.store
 
-        // While the tidy is with the AI, the user deletes "Trouble sleeping" on the map.
+        // While the tidy is with the AI, the user renames "the Friday review" on the map.
         provider.onRequest = { _ in
             let before = store.loadSnapshot()
             var memory = before
             var pins = store.loadPins()
-            MemoryFixes.apply(.delete(id: "trouble-sleeping"), to: &memory, pins: &pins)
+            MemoryFixes.apply(.rename(id: "the-friday-review", to: "Friday reviews"), to: &memory, pins: &pins)
             try? store.savePins(pins)
             try? store.write(memory, replacing: before)
         }
@@ -517,9 +421,11 @@ enum TidyJSON {
         let outcome = await sandbox.engine(provider, limits: lowBar).tidy(force: true)
 
         let memory = store.loadSnapshot()
-        #expect(memory.thoughts["trouble-sleeping"] == nil)
-        #expect(outcome?.links == 0)
-        // The pattern itself is a different thought and is allowed.
-        #expect(memory.thoughts["sleep-follows-what-is-unresolved"] != nil)
+        // A thought the user has named is not folded away, and keeps the name they gave it.
+        #expect(outcome?.merged == 0)
+        #expect(memory.thoughts["the-friday-review"]?.label == "Friday reviews")
+        // The rest of the tidy still goes ahead.
+        #expect(outcome?.retired == 1)
+        #expect(memory.thoughts["arjun"] == nil)
     }
 }

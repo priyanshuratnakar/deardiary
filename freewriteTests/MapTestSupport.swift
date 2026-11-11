@@ -34,12 +34,14 @@ enum MapFixtures {
     static func journal(days: Int = 200, seed: UInt64 = 21) -> MemorySnapshot {
         var numbers = Numbers(seed: seed)
         var memory = MemorySnapshot()
-        let kinds = ThoughtKind.allCases
+        // Mostly topics and people, as a journal read in the shape memory has had since M14:
+        // few things help or stay open, and a feeling is only a dot once it has been named twice.
+        let kinds: [ThoughtKind] = [.topic, .topic, .topic, .topic, .person, .person, .person, .open, .helped, .topic]
         let recurring: [(String, ThoughtKind, Int)] = [
-            ("Saying yes under pressure", .theme, 42), ("Meera", .person, 34), ("Trouble sleeping", .feeling, 30),
-            ("Work", .theme, 26), ("Money", .theme, 22), ("Mother", .person, 18), ("Running", .idea, 16),
-            ("The launch", .event, 14), ("Writing", .idea, 12), ("What am I afraid of?", .question, 10),
-            ("The move", .decision, 9), ("Arjun", .person, 8),
+            ("Meera", .person, 42), ("work", .topic, 34), ("couldn't sleep", .feeling, 30),
+            ("Ma", .person, 26), ("money", .topic, 22), ("the launch", .topic, 18), ("a run before work", .helped, 16),
+            ("tired", .feeling, 14), ("the novel", .topic, 12), ("Arjun", .person, 10),
+            ("the move", .topic, 9), ("Tanvi", .person, 8),
         ]
         func entry(_ day: Int) -> (UUID, String) {
             (UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", day))!,
@@ -47,7 +49,7 @@ enum MapFixtures {
         }
         func add(_ id: String, label: String, kind: ThoughtKind, day: Int) {
             let (entryID, date) = entry(day)
-            var thought = memory.thoughts[id] ?? Thought(id: id, label: label, kind: kind, summary: "A made-up thought for testing the map.")
+            var thought = memory.thoughts[id] ?? Thought(id: id, label: label, kind: kind)
             if !thought.evidence.contains(where: { $0.entryID == entryID }) {
                 thought.evidence.append(Evidence(entryID: entryID, date: date, quote: "A made-up line about \(label.lowercased())."))
             }
@@ -74,7 +76,7 @@ enum MapFixtures {
         // A few links between the thoughts that keep coming back.
         for (from, to) in [(0, 1), (2, 0), (1, 7), (3, 4), (5, 2), (6, 2), (8, 3), (9, 0), (10, 4), (11, 3)] {
             guard let first = memory.thoughts["recurring-\(from)"]?.evidence.first, memory.thoughts["recurring-\(to)"] != nil else { continue }
-            memory.thoughts["recurring-\(from)"]?.links.append(ThoughtLink(target: "recurring-\(to)", reason: "shows up with", entryID: first.entryID, date: first.date, quote: first.quote))
+            memory.thoughts["recurring-\(from)"]?.links.append(ThoughtLink(target: "recurring-\(to)", reason: MemoryApplier.sameSentence, entryID: first.entryID, date: first.date, quote: first.quote))
         }
         return memory
     }
@@ -84,7 +86,7 @@ enum MapFixtures {
     static func crowd(count: Int, seed: UInt64 = 7) -> MemorySnapshot {
         var numbers = Numbers(seed: seed)
         var memory = MemorySnapshot()
-        let kinds = ThoughtKind.allCases
+        let kinds = ThoughtKind.journal
         let ids = (0..<count).map { "thought-\($0)" }
 
         for (index, id) in ids.enumerated() {

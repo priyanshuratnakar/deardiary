@@ -250,49 +250,46 @@ import Testing
 
     @Test func aRenameSurvives() async {
         let (sandbox, engine, _) = await digestedWeek()
-        #expect(await engine.fix(.rename(id: "trouble-sleeping", to: "Bad nights")))
+        #expect(await engine.fix(.rename(id: "the-pricing-page", to: "What we charge")))
 
         await engine.rebuild()
 
-        let thought = sandbox.store.loadSnapshot().thoughts["trouble-sleeping"]
-        #expect(thought?.label == "Bad nights")
-        #expect(thought?.evidence.count == 3)
+        let thought = sandbox.store.loadSnapshot().thoughts["the-pricing-page"]
+        #expect(thought?.label == "What we charge")
+        #expect(thought?.evidence.count == 2)
     }
 
-    @Test func aRenameSurvivesEvenWhenTheAINamesTheThoughtDifferentlyTheSecondTime() async throws {
-        // On the rebuild, Monday's reply calls it "Sleepless nights" and mentions the old name only as another name.
-        let mondayAgain = MemoryWeek.mondayReply
-            .replacingOccurrences(of: "\"label\":\"Trouble sleeping\"", with: "\"label\":\"Sleepless nights\"")
-            .replacingOccurrences(of: "\"aliases\":[],\"kind\":\"feeling\"", with: "\"aliases\":[\"Trouble sleeping\"],\"kind\":\"feeling\"")
-            .replacingOccurrences(of: "\"from\":\"Trouble sleeping\"", with: "\"from\":\"Sleepless nights\"")
-        #expect(mondayAgain != MemoryWeek.mondayReply)
-        let replies = [mondayAgain] + Array(MemoryWeek.replies.dropFirst())
+    @Test func aRenameSurvivesEvenWhenTheNameIsWrittenDifferentlyTheSecondTime() async throws {
+        // On the rebuild, Friday's reply writes it "Pricing Page": no "the", other capitals.
+        let fridayAgain = MemoryWeek.fridayReply.replacingOccurrences(of: "\"name\":\"the pricing page\"", with: "\"name\":\"Pricing Page\"")
+        #expect(fridayAgain != MemoryWeek.fridayReply)
+        let replies = [MemoryWeek.mondayReply, MemoryWeek.wednesdayReply, fridayAgain, MemoryWeek.sundayReply]
 
         let (sandbox, engine, _) = await digestedWeek(rebuildReplies: replies)
-        await engine.fix(.rename(id: "trouble-sleeping", to: "Bad nights"))
+        await engine.fix(.rename(id: "the-pricing-page", to: "What we charge"))
 
         await engine.rebuild()
 
         let memory = sandbox.store.loadSnapshot()
-        #expect(memory.thoughts["sleepless-nights"] == nil)
-        let thought = try #require(memory.thoughts["trouble-sleeping"])
-        #expect(thought.label == "Bad nights")
-        #expect(thought.aliases.contains("Sleepless nights"))
-        #expect(thought.evidence.count == 3)
+        #expect(memory.thoughts["pricing-page"] == nil)
+        let thought = try #require(memory.thoughts["the-pricing-page"])
+        #expect(thought.label == "What we charge")
+        #expect(thought.aliases.contains("Pricing Page"))
+        #expect(thought.evidence.count == 2)
     }
 
     @Test func aMergeSurvives() async throws {
         let (sandbox, engine, _) = await digestedWeek()
-        #expect(await engine.fix(.merge(from: "the-pricing-page", into: "saying-yes-under-pressure")))
+        #expect(await engine.fix(.merge(from: "the-friday-review", into: "the-launch")))
 
         await engine.rebuild()
 
         let memory = sandbox.store.loadSnapshot()
-        #expect(memory.thoughts["the-pricing-page"] == nil)
-        let kept = try #require(memory.thoughts["saying-yes-under-pressure"])
-        #expect(kept.evidence.map(\.quote).contains("I think I already know I don't want the pricing page."))
-        #expect(kept.evidence.map(\.quote).contains("I said I needed to think about it."))
-        #expect(!sandbox.thoughtFileExists("the-pricing-page"))
+        #expect(memory.thoughts["the-friday-review"] == nil)
+        let kept = try #require(memory.thoughts["the-launch"])
+        #expect(kept.evidence.map(\.quote).contains("Told Arjun I might skip the Friday review"))
+        #expect(kept.evidence.map(\.quote).contains("The launch date moved again."))
+        #expect(!sandbox.thoughtFileExists("the-friday-review"))
     }
 
     @Test func aDeletionSurvives() async {
@@ -305,30 +302,57 @@ import Testing
         #expect(sandbox.store.loadSnapshot().thoughts["arjun"] == nil)
         #expect(!sandbox.thoughtFileExists("arjun"))
         let wednesday = sandbox.store.loadDigest(entryID: MemoryWeek.wednesday.id)
-        #expect(wednesday?.rejected.contains(EntryDigest.Rejection(item: "new_thought", reason: "You deleted this thought.")) == true)
+        #expect(wednesday?.rejected.contains(EntryDigest.Rejection(item: "person", reason: "You deleted this thought.")) == true)
     }
 
     @Test func aLinkMadeByHandSurvives() async {
         let (sandbox, engine, _) = await digestedWeek()
-        #expect(await engine.fix(.addLink(from: "running", to: "trouble-sleeping", reason: "helps with")))
+        #expect(await engine.fix(.addLink(from: "a-run-before-work", to: "meera", reason: "clears my head before")))
 
         await engine.rebuild()
 
         let memory = sandbox.store.loadSnapshot()
-        #expect(memory.thoughts["running"]?.userLinks == [UserLink(target: "trouble-sleeping", reason: "helps with")])
+        #expect(memory.thoughts["a-run-before-work"]?.userLinks == [UserLink(target: "meera", reason: "clears my head before")])
         let graph = GraphBuilder.build(from: memory, saved: [:]).graph
-        #expect(graph.edges.contains { $0.id == "running|trouble-sleeping" && $0.reasons == ["helps with"] })
+        #expect(graph.edges.contains { $0.id == "a-run-before-work|meera" && $0.reasons == ["clears my head before"] })
     }
 
     @Test func aRemovedLinkStaysRemoved() async {
         let (sandbox, engine, _) = await digestedWeek()
+        #expect(sandbox.store.loadSnapshot().thoughts["meera"]?.links.contains { $0.target == "the-pricing-page" } == true)
         #expect(await engine.fix(.removeLink("meera", "the-pricing-page")))
 
         await engine.rebuild()
 
-        #expect(sandbox.store.loadSnapshot().thoughts["the-pricing-page"]?.links.isEmpty == true)
+        let memory = sandbox.store.loadSnapshot()
+        #expect(memory.thoughts["meera"]?.links.contains { $0.target == "the-pricing-page" } == false)
+        #expect(memory.thoughts["the-pricing-page"]?.links.isEmpty == true)
         let friday = sandbox.store.loadDigest(entryID: MemoryWeek.friday.id)
         #expect(friday?.rejected.contains(EntryDigest.Rejection(item: "link", reason: "You removed this link.")) == true)
+    }
+
+    @Test func somethingMarkedDoneStaysOffTheMapAndItsLineStaysOnTheDay() async throws {
+        let (sandbox, engine, _) = await digestedWeek()
+        #expect(await engine.fix(.settle(id: "need-to-tell-her-by-tuesday", as: .done, on: "2026-11-10")))
+        #expect(!sandbox.thoughtFileExists("need-to-tell-her-by-tuesday"))
+        // Only something still open can be closed.
+        #expect(await engine.fix(.settle(id: "meera", as: .done, on: "2026-11-10")) == false)
+
+        await engine.rebuild()
+
+        let memory = sandbox.store.loadSnapshot()
+        #expect(memory.thoughts["need-to-tell-her-by-tuesday"] == nil)
+        // The other open thing is untouched.
+        #expect(memory.thoughts["i-said-i-needed-to-think-about-it"] != nil)
+        let sunday = try #require(sandbox.store.loadDigest(entryID: MemoryWeek.sunday.id))
+        #expect(sunday.lines?.contains(DayLine(kind: .stillOpen, quote: "Need to tell her by Tuesday.")) == true)
+        #expect(!sunday.rejected.contains { $0.item == "open_loop" })
+
+        let pins = sandbox.store.loadPins()
+        #expect(pins.settled(forLine: "Need to tell her by Tuesday.") == .done)
+        #expect(pins.deletions.first?.on == "2026-11-10")
+        // The profile no longer counts it.
+        #expect(memory.profile.contains("Still open: 1 thing, since Friday 6 November 2026."))
     }
 
     @Test func theFixesFileItselfIsKeptByARebuild() async {
@@ -378,6 +402,7 @@ import Testing
         #expect(!sandbox.thoughtFileExists("meera"))
         #expect(store.loadPins().isDeleted("meera"))
         // Wednesday's own thoughts still went in.
-        #expect(memory.thoughts["running"] != nil)
+        #expect(memory.thoughts["a-run-before-work"] != nil)
+        #expect(memory.thoughts["arjun"] != nil)
     }
 }
