@@ -33,6 +33,8 @@ A draft of journal-shaped instructions (`scripts/model-check/memory-new.txt`: pe
 | `llama3.2` | 97% (116 of 120) | 14 | 6.7 | 1.4 |
 | `gemma4:12b` | 100% (104 of 104) | 17 | 5.8 | 3.0 |
 
+A revised draft (12 November, now in `memory-new.txt`) adds topics and "what helped", and hands the people, topics and feelings already found to the next entry, the way the app hands over what is in memory. On `gemma4:12b`: 18 of 18 readable, 110 of 110 quotes exact, 17 of 17 people, 3.3 seconds an entry. Names were reused across entries: lower-case "meera" joined Meera, "pricing" joined "the pricing page", and "so tired" joined "tired". It did not join "Slept badly" to "Couldn't sleep", and it found "what helped" only once (the run).
+
 What `gemma4:12b` kept for four of the entries, with the app's instructions as they are:
 
 - "Meera [person]; The Launch [event]; People Pleasing [theme]"

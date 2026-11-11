@@ -6,7 +6,8 @@
 #   what:
 #     memory-app          the app's own memory instructions, thinking off, temperature 0
 #     memory-app-default  the same, with no settings sent (how the app behaved before 12 Nov 2026)
-#     memory-new          a draft of journal-shaped memory instructions (memory-new.txt)
+#     memory-new          a draft of journal-shaped memory instructions (memory-new.txt), with the
+#                         names already found handed on from one entry to the next
 #     talk-app            the app's own talk, on the 18 entries
 #     talk-hard-app       the app's own talk on the harder cases: an earlier day, closing,
 #                         medical, "are you a therapist", danger, a figure of speech
@@ -85,16 +86,27 @@ def memory_app(default_settings):
     return rows
 
 def memory_new():
+    """The draft for step 3: list what is in an entry, in the writer's own words. The entries are
+    read in order, and the people, topics and feelings already found are handed to the next one,
+    the way the app hands over what is in memory."""
     item = lambda fields: {"type": "array", "items": {"type": "object", "additionalProperties": False, "required": list(fields), "properties": fields}}
     t = {"type": "string"}
-    schema = {"type": "object", "additionalProperties": False, "required": ["people", "feelings", "events", "self_talk", "helped", "matters", "open_loops"],
-              "properties": {"people": item({"name": t, "quote": t}), "feelings": item({"word": t, "tone": {"type": "string", "enum": ["pleasant", "unpleasant", "mixed"]}, "quote": t}),
-                             "events": item({"what": t, "quote": t}), "self_talk": item({"quote": t}), "helped": item({"what": t, "quote": t}),
+    schema = {"type": "object", "additionalProperties": False,
+              "required": ["people", "topics", "feelings", "happened", "self_talk", "helped", "matters", "open_loops"],
+              "properties": {"people": item({"name": t, "quote": t}), "topics": item({"name": t, "quote": t}),
+                             "feelings": item({"word": t, "tone": {"type": "string", "enum": ["pleasant", "unpleasant", "mixed"]}, "quote": t}),
+                             "happened": item({"what": t, "quote": t}), "self_talk": item({"quote": t}), "helped": item({"what": t, "quote": t}),
                              "matters": item({"what": t, "quote": t}), "open_loops": item({"what": t, "quote": t})}}
     system = open(sys.path[0] + "/memory-new.txt", encoding="utf-8").read()
+    key = lambda name: re.sub(r"^(the|a|an|my) ", "", norm(name))
+    people, topics, feelings = {}, {}, {}
     rows = []
     for e in ENTRIES:
-        r = chat(system, [{"role": "user", "content": 'Entry: "' + e["text"] + '"'}], schema=schema, temperature=0, think=False)
+        known = "People already in memory: %s\nTopics already in memory: %s\nFeelings already in memory: %s" % (
+            ", ".join(people.values()) or "(none yet)", ", ".join(topics.values()) or "(none yet)",
+            ", ".join("%s (%s)" % f for f in feelings.values()) or "(none yet)")
+        r = chat(system, [{"role": "user", "content": known + "\n\nEntry written on %s:\n<entry>\n%s\n</entry>" % (e["day"], e["text"])}],
+                 schema=schema, temperature=0, think=False)
         row = {"id": e["id"], "seconds": r["seconds"], "ok": False, "items": 0, "quotes": 0, "exact": 0, "people": 0, "speed": r.get("speed", 0), "labels": ""}
         try:
             data = json.loads(r["text"])
@@ -102,18 +114,26 @@ def memory_new():
             row.update(ok=True, items=sum(len(g) for g in data.values()), quotes=len(quotes), exact=sum(in_entry(q, e["text"]) for q in quotes))
             names = " ".join(norm(x["name"]) for x in data["people"])
             row["people"] = sum(norm(p).replace("dr. ", "") in names for p in e["people"])
+            again = [x["name"] for x in data["people"] if key(x["name"]) in people] + [x["name"] for x in data["topics"] if key(x["name"]) in topics] \
+                + [x["word"] for x in data["feelings"] if key(x["word"]) in feelings]
+            for x in data["people"]: people.setdefault(key(x["name"]), x["name"])
+            for x in data["topics"]: topics.setdefault(key(x["name"]), x["name"])
+            for x in data["feelings"]: feelings.setdefault(key(x["word"]), (x["word"], x["tone"]))
             row["labels"] = " | ".join(filter(None, [
                 "P: " + ", ".join(x["name"] for x in data["people"]) if data["people"] else "",
+                "T: " + ", ".join(x["name"] for x in data["topics"]) if data["topics"] else "",
                 "F: " + "; ".join("%s(%s)" % (x["word"], x["tone"][:1]) for x in data["feelings"]) if data["feelings"] else "",
-                "E: " + "; ".join(x["what"] for x in data["events"]) if data["events"] else "",
+                "E: " + "; ".join(x["what"] for x in data["happened"]) if data["happened"] else "",
                 "S: " + "; ".join(x["quote"] for x in data["self_talk"]) if data["self_talk"] else "",
                 "H: " + "; ".join(x["what"] for x in data["helped"]) if data["helped"] else "",
                 "M: " + "; ".join(x["what"] for x in data["matters"]) if data["matters"] else "",
-                "O: " + "; ".join(x["what"] for x in data["open_loops"]) if data["open_loops"] else ""]))
+                "O: " + "; ".join(x["what"] for x in data["open_loops"]) if data["open_loops"] else "",
+                "AGAIN: " + ", ".join(again) if again else ""]))
         except Exception as error:
             row["labels"] = "UNREADABLE: " + (r.get("error") or str(error))[:80]
         rows.append(row)
-        print("%-9s %5.1fs %s" % (e["id"], row["seconds"], row["labels"][:330]), flush=True)
+        print("%-9s %5.1fs %s" % (e["id"], row["seconds"], row["labels"][:420]), flush=True)
+    print("KEPT %s %s: people %d (%s) | topics %d (%s)" % (MODEL, WHAT, len(people), ", ".join(people.values()), len(topics), ", ".join(topics.values())))
     return rows
 
 def memory_summary(rows):
