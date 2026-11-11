@@ -9,9 +9,26 @@
 //  Nothing here runs unless the user has switched talk on. While it is off,
 //  no request is ever made.
 //
+//  Three things are decided here, by the app, and not left to the model:
+//
+//  1. Never two questions in a row. If the last reply asked something and the
+//     user has answered, the next reply is told not to ask (`Prompts.talkNoQuestionNote`).
+//  2. The help line. If what was written may mean danger (`CareNet`), the app
+//     shows its own line at once and tells the model to follow the danger rule.
+//     If the model marks a reply as care by itself, the line is shown too.
+//  3. Earlier lines are written out by the app (`TalkReply`), word for word.
+//
 
 import Foundation
 import Combine
+
+/// Limits for talk mode.
+enum TalkLimits {
+    /// When a model marks a reply as care, the help line is shown with it unless it is
+    /// already among this many lines just above, so it is there without being repeated
+    /// under every reply.
+    static let careLineGap = 6
+}
 
 /// The entry talk mode is reading.
 struct TalkEntry: Equatable {
@@ -148,8 +165,9 @@ final class TalkController: ObservableObject {
 
         if speakFirst,
            let newEntry,
-           transcript.messages.isEmpty,
+           !transcript.messages.contains(where: { $0.speaker != .note }),
            !newEntry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            showCareLineIfNeeded(entry: newEntry)
             requestReply()
         }
     }
@@ -181,8 +199,24 @@ final class TalkController: ObservableObject {
         }
 
         transcript.messages.append(TalkMessage(speaker: .you, text: text, date: now()))
+        showCareLineIfNeeded(entry: entry)
         store.save(transcript.messages, entryID: entry.id)
         requestReply()
+    }
+
+    /// Shows the app's help line, at once, if what was just written may mean danger:
+    /// the message just sent, or the entry if this conversation has not shown the line yet.
+    /// It does not wait for a reply, so the line is there even if no reply ever comes.
+    private func showCareLineIfNeeded(entry: TalkEntry) {
+        let waiting = Self.sinceLastReply(transcript.messages)
+        guard !waiting.contains(where: { $0.speaker == .note }) else { return }
+
+        let inAMessage = waiting.contains { $0.speaker == .you && CareNet.mayBeInDanger($0.text) }
+        let inTheEntry = !transcript.messages.contains(where: { $0.speaker == .note }) && CareNet.mayBeInDanger(entry.text)
+        guard inAMessage || inTheEntry else { return }
+
+        transcript.messages.append(TalkMessage(speaker: .note, text: Prompts.talkCareLine, date: now()))
+        store.save(transcript.messages, entryID: entry.id)
     }
 
     /// Asks again after a failed reply.
@@ -200,8 +234,9 @@ final class TalkController: ObservableObject {
         transcript.isWaiting = true
 
         let model = settings.resolvedTalkModel
-        let history = Self.history(from: transcript.messages)
-        let recentMessages = transcript.messages.filter { $0.speaker == .you }.suffix(4).map(\.text)
+        let messages = transcript.messages
+        let turn = Self.turn(for: messages)
+        let recentMessages = messages.filter { $0.speaker == .you }.suffix(4).map(\.text)
         let entryID = entry.id
         let provider = makeProvider()
 
@@ -209,14 +244,19 @@ final class TalkController: ObservableObject {
             // If talk was switched off before this even started, send nothing at all.
             guard !Task.isCancelled else { return }
 
-            // Pick the notes from memory that bear on this, if memory is on.
-            let memory = await self?.memoryContext(for: entry, recentMessages: recentMessages)
+            // Pick the lines from memory that bear on this, if memory is on. When someone
+            // may be in danger nothing from memory is sent: that reply is about now.
+            var memory: TalkMemoryContext? = nil
+            if turn != .danger {
+                memory = await self?.memoryContext(for: entry, recentMessages: recentMessages)
+            }
             guard self != nil, !Task.isCancelled else { return }
+            let lines = Prompts.earlierLines(from: memory)
 
             let request = LLMRequest(
                 model: model,
-                system: Prompts.talkSystem(entryText: entry.text, entryDate: entry.date, memory: memory),
-                messages: history,
+                system: Prompts.talkSystem(entryText: entry.text, entryDate: entry.date, memory: memory, turn: turn),
+                messages: Self.history(from: messages, lines: lines),
                 maxTokens: AILimits.talkMaxTokens,
                 retryIfDeclined: true
             )
@@ -226,11 +266,16 @@ final class TalkController: ObservableObject {
                 for try await piece in provider.stream(request) {
                     reply += piece
                     guard let self, !Task.isCancelled else { return }
-                    self.transcript.isWaiting = false
-                    self.transcript.replyInProgress = reply
+                    // What is shown is the reply with the app's parts filled in: an earlier
+                    // line written out, the private care mark taken off.
+                    let shown = TalkReply.shown(reply, lines: lines, finished: false).text
+                    if !shown.isEmpty {
+                        self.transcript.isWaiting = false
+                        self.transcript.replyInProgress = shown
+                    }
                 }
                 guard let self, !Task.isCancelled else { return }
-                self.finishReply(reply, entryID: entryID)
+                self.finishReply(reply, lines: lines, entryID: entryID)
             } catch is CancellationError {
                 // Talk was switched off or the entry changed. The partial reply is dropped.
             } catch {
@@ -256,18 +301,25 @@ final class TalkController: ObservableObject {
         return context.isEmpty ? nil : context
     }
 
-    private func finishReply(_ reply: String, entryID: UUID) {
+    private func finishReply(_ reply: String, lines: [EarlierLine], entryID: UUID) {
         clearReplyState()
         guard entry?.id == entryID else { return }
 
-        let text = reply.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else {
+        let shown = TalkReply.shown(reply, lines: lines, finished: true)
+        guard !shown.text.isEmpty else {
             transcript.notice = "\(settings.provider.serviceName) answered with nothing."
             transcript.canRetry = true
             return
         }
 
-        transcript.messages.append(TalkMessage(speaker: .diary, text: text, date: now()))
+        // The model saw danger that the app's own net did not: show the help line with
+        // this reply, unless it has been shown in the last few lines already.
+        let showedLately = transcript.messages.suffix(TalkLimits.careLineGap).contains { $0.speaker == .note }
+        if (shown.flaggedCare || TalkReply.asksIfSafe(shown.text)), !showedLately {
+            transcript.messages.append(TalkMessage(speaker: .note, text: Prompts.talkCareLine, date: now()))
+        }
+
+        transcript.messages.append(TalkMessage(speaker: .diary, text: shown.text, date: now()))
         store.save(transcript.messages, entryID: entryID)
     }
 
@@ -294,11 +346,55 @@ final class TalkController: ObservableObject {
 
     // MARK: - Building the conversation for the model
 
+    /// What has been said since the last reply: the messages still waiting for one.
+    static func sinceLastReply(_ messages: [TalkMessage]) -> [TalkMessage] {
+        guard let lastReply = messages.lastIndex(where: { $0.speaker == .diary }) else { return messages }
+        return Array(messages[(lastReply + 1)...])
+    }
+
+    /// What the app adds to the instructions for the next reply.
+    static func turn(for messages: [TalkMessage]) -> Prompts.TalkTurn {
+        let waiting = sinceLastReply(messages)
+
+        // The help line is showing and has not been answered, or a message may mean danger.
+        if waiting.contains(where: { $0.speaker == .note || ($0.speaker == .you && CareNet.mayBeInDanger($0.text)) }) {
+            return .danger
+        }
+
+        // Never two questions in a row: the last reply asked, and they have answered.
+        guard let lastReply = messages.lastIndex(where: { $0.speaker == .diary }) else { return .ordinary }
+        let answer = waiting.filter { $0.speaker == .you }.map(\.text).joined(separator: "\n")
+        // A reply that came with the help line is left alone: the danger rule covers what follows it.
+        let cameWithHelpLine = lastReply > 0 && messages[lastReply - 1].speaker == .note
+        if !answer.isEmpty,
+           // If they asked something instead of answering, the reply should answer it.
+           !TalkReply.writerAsks(answer),
+           !cameWithHelpLine,
+           TalkReply.asksAQuestion(messages[lastReply].text) {
+            return .noQuestion
+        }
+        return .ordinary
+    }
+
     /// Turns the saved conversation into the back-and-forth the model expects:
     /// it must start with the user, and the two sides must take turns.
-    static func history(from messages: [TalkMessage]) -> [LLMMessage] {
+    ///
+    /// The app's own help line is left out: no model wrote it and none is sent it. An
+    /// earlier line the app wrote out goes back to its number (see `TalkReply.forModel`),
+    /// and a reply that came with the help line gets its care mark back, so the model
+    /// sees its own replies the way it is asked to write them.
+    static func history(from messages: [TalkMessage], lines: [EarlierLine] = []) -> [LLMMessage] {
         var result: [LLMMessage] = []
-        for message in messages {
+        for (index, original) in messages.enumerated() {
+            guard original.speaker != .note else { continue }
+            var message = original
+            if message.speaker == .diary {
+                message.text = TalkReply.forModel(message.text, lines: lines)
+                guard !message.text.isEmpty else { continue }
+                if index > 0, messages[index - 1].speaker == .note {
+                    message.text = TalkReply.careTag + "\n" + message.text
+                }
+            }
             let role: LLMMessage.Role = message.speaker == .you ? .user : .assistant
             if let last = result.last, last.role == role {
                 // Two in a row from the same side (for example after a failed reply) are joined.

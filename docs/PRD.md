@@ -44,8 +44,8 @@ Off by default. Turning it on is how you say "I want to be heard now."
 
 - A quiet conversation column opens beside the page. The page stays visible and editable.
 - If there is writing on the page, it opens with one short response to what you wrote. If the page is empty, it waits for you.
-- Replies stream in. They are short, in plain prose, in the voice of a thoughtful therapist: it reflects what it notices, asks one question at a time, and is honest.
-- It knows today's entry, your memory profile, and the past thoughts and entries that relate to what you are saying. When it draws on the past it says which day, so you can check it.
+- Replies stream in. They are short, in plain prose, in the voice of a close friend who read every word: warm, plain-spoken and honest. It uses your own words, asks at most one question, and never asks two in a row.
+- It knows today's entry, your memory profile, and lines you wrote on earlier days that relate to what you are saying. When it brings one up, the app itself writes the line out, word for word, with its day, so you can check it.
 - Each entry keeps its own conversation, saved next to the entry.
 - Turning talk off closes the column. No AI call happens while it is off.
 
@@ -157,12 +157,12 @@ Existing freewrite entries work as they are. Deleting the `memory` folder loses 
 - Memory building is opt-in and separate from talk, so you can talk without having every entry digested.
 - "Forget everything" deletes the memory folder in one click.
 
-**How talk mode behaves.** It sounds like a good therapist but is not one, and says so if asked.
+**How talk mode behaves.** It sounds like a close friend who read every word, not a therapist. If asked, it says it is an AI inside your journal and cannot replace one. (Until 12 November 2026 this read "sounds like a good therapist but is not one"; that voice made replies generic, so it was changed.)
 
-- It reflects, asks, and is honest. It does not flatter, agree just to soothe, diagnose, or label.
+- It reflects, asks, and is honest. It does not flatter, agree just to be kind, diagnose, label, or judge people it only knows from your page.
 - It points you toward the real people in your life when that fits.
-- If an entry or message is about wanting to die, self-harm, or being in danger, it drops the reflective style, asks directly whether you are safe, and encourages reaching a real person: someone you trust, Tele-MANAS on 14416 in India, or local emergency services.
-- It only states things about your past that it can tie to an entry.
+- If an entry or message is about wanting to die, self-harm, or being in danger, it drops everything else and asks directly whether you are safe. The app itself, not the AI, shows where to reach a person: someone you trust, Tele-MANAS on 14416 in India, or your local emergency number. That line is always the same words, and it is shown whether or not the AI noticed.
+- It only states things about your past that it can tie to an entry. A line from an earlier day is written out by the app, never retyped by the AI.
 
 ## Milestones
 

@@ -8,6 +8,10 @@
 //  It keeps to freewrite's look: no header, no bubbles, no icons. Replies are
 //  plain text in the page's own font. Your lines are grey. One input at the bottom.
 //
+//  Two things in the column are the app's own, not a model's: a line from an
+//  earlier entry (grey like your other lines, with its day, beside a thin rule)
+//  and the help line shown when someone may be in danger (small, under a rule).
+//
 
 import SwiftUI
 import AppKit
@@ -26,6 +30,8 @@ struct TalkStyle: Equatable {
         isLight ? Color(red: 0.20, green: 0.20, blue: 0.20) : Color(red: 0.9, green: 0.9, blue: 0.9)
     }
     var hintColor: Color { isLight ? .gray.opacity(0.5) : .gray.opacity(0.6) }
+    /// The thin rules beside an earlier line and above the help line.
+    var ruleColor: Color { isLight ? Color(white: 0.88) : Color(white: 0.2) }
     var backgroundColor: Color { isLight ? .white : .black }
 }
 
@@ -80,16 +86,23 @@ struct TalkColumn: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
-                        ForEach(Array(transcript.messages.enumerated()), id: \.offset) { _, message in
-                            line(message.text, color: message.speaker == .you ? style.quietColor : style.bodyColor)
+                        let order = TalkColumn.drawingOrder(transcript.messages, replyOnItsWay: transcript.isBusy)
+
+                        ForEach(Array(order.settled.enumerated()), id: \.offset) { _, message in
+                            messageView(message)
                         }
 
                         if let reply = transcript.replyInProgress {
-                            line(reply, color: style.bodyColor)
+                            replyView(reply)
                         }
 
                         if transcript.isWaiting {
                             line("…", color: style.quietColor)
+                        }
+
+                        // The help line stays under the reply it belongs with, while that reply arrives too.
+                        if let helpLine = order.underTheReply {
+                            messageView(helpLine)
                         }
 
                         if let notice = transcript.notice {
@@ -146,6 +159,95 @@ struct TalkColumn: View {
         }
         .onDisappear {
             BackspaceLockScope.talkInputFocused = false
+        }
+    }
+
+    /// The conversation in the order it is drawn. The app's help line is saved just
+    /// before the reply it came with, so it is on the page at once; it is drawn under
+    /// that reply. While that reply is still on its way, the line waits below it.
+    static func drawingOrder(_ messages: [TalkMessage], replyOnItsWay: Bool) -> (settled: [TalkMessage], underTheReply: TalkMessage?) {
+        var settled = messages
+        var underTheReply: TalkMessage? = nil
+        if replyOnItsWay, let last = settled.last, last.speaker == .note {
+            underTheReply = last
+            settled.removeLast()
+        }
+        var index = 0
+        while index + 1 < settled.count {
+            if settled[index].speaker == .note, settled[index + 1].speaker == .diary {
+                settled.swapAt(index, index + 1)
+                index += 2
+            } else {
+                index += 1
+            }
+        }
+        return (settled, underTheReply)
+    }
+
+    @ViewBuilder
+    private func messageView(_ message: TalkMessage) -> some View {
+        switch message.speaker {
+        case .you:
+            line(message.text, color: style.quietColor)
+        case .diary:
+            replyView(message.text)
+        case .note:
+            helpLineView(message.text)
+        }
+    }
+
+    /// A reply: plain paragraphs, and any line from an earlier entry the app wrote out.
+    @ViewBuilder
+    private func replyView(_ text: String) -> some View {
+        let passages = TalkPassage.split(text)
+        if passages.contains(where: { if case .earlier = $0 { return true } else { return false } }) {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(Array(passages.enumerated()), id: \.offset) { _, passage in
+                    switch passage {
+                    case .plain(let words):
+                        line(words, color: style.bodyColor)
+                    case .earlier(let day, let quote):
+                        earlierLineView(day: day, quote: quote)
+                    }
+                }
+            }
+        } else {
+            line(text, color: style.bodyColor)
+        }
+    }
+
+    /// The writer's own words from an earlier day: grey, like their other lines.
+    private func earlierLineView(day: String, quote: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Rectangle()
+                .fill(style.ruleColor)
+                .frame(width: 2)
+            VStack(alignment: .leading, spacing: 3) {
+                if !day.isEmpty {
+                    Text(day)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                line("\u{201C}" + quote + "\u{201D}", color: style.quietColor)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// The app's own line about where to reach help.
+    private func helpLineView(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Rectangle()
+                .fill(style.ruleColor)
+                .frame(height: 1)
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundColor(style.bodyColor)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
         }
     }
 

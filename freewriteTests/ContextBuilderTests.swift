@@ -167,44 +167,88 @@ import Testing
 
     // MARK: - How it is laid out for the model
 
-    @Test func theNotesNameEachDayInFullAndQuoteTheEntry() throws {
+    @Test func theNotesAreNumberedLinesInTheWritersOwnWords() throws {
         let context = try build(newEntry("Meera wants an answer today."))
         let notes = Prompts.talkMemoryNotes(context)
+        let lines = Prompts.earlierLines(from: context)
 
-        #expect(notes.hasPrefix("These are the notes from their earlier entries.\n\n<memory>\nProfile:\n"))
-        #expect(notes.hasSuffix("\n</memory>"))
-        #expect(notes.contains("Meera (person). A colleague leading the launch, whose requests are hard to refuse."))
-        #expect(notes.contains("- Monday 2 November 2026, they wrote: \"I keep replaying the call with Meera about the launch.\""))
-        #expect(notes.contains("- How it shifted, Sunday 8 November 2026: Leaning towards saying no."))
-        #expect(notes.contains("- Linked to Meera (asked for by), Friday 6 November 2026: \"Meera asked if I could also take the pricing page.\""))
-        #expect(notes.contains("What those entries were about:\n- Monday 2 November 2026: A sleepless night"))
+        #expect(notes.hasPrefix("These are lines from their earlier entries.\n\n<earlier>\nProfile (background only):\n"))
+        #expect(notes.hasSuffix("\n</earlier>"))
+
+        // Numbered from 1, each with its day in full, what it was about, and the entry's own words.
+        #expect(!lines.isEmpty)
+        #expect(lines.map(\.number) == Array(1...lines.count))
+        for line in lines {
+            #expect(notes.contains("{\(line.number)} \(Prompts.longDay(line.date)), about \(line.label): \"\(line.quote)\""))
+        }
+        let replaying = try #require(lines.first { $0.quote == "I keep replaying the call with Meera about the launch." })
+        #expect(replaying.date == "2026-11-02")
+        #expect(notes.contains("Monday 2 November 2026, about "))
+
+        // What the AI wrote about a thought is not sent: only what can be shown word for word.
+        #expect(!notes.contains("A colleague leading the launch"))
+        #expect(!notes.contains("How it shifted"))
+        #expect(!notes.contains("What those entries were about"))
     }
 
-    @Test func withMemoryTheInstructionsSayToNameTheDayAndStateNothingElse() throws {
+    @Test func noThoughtCrowdsOutTheOthersAndALineIsOfferedOnce() {
+        func thought(_ label: String, _ quotes: [(String, String)]) -> TalkMemoryContext.Item {
+            TalkMemoryContext.Item(
+                id: label.lowercased(), label: label, kind: .theme, summary: "",
+                quotes: quotes.map { TalkMemoryContext.Quote(date: $0.0, text: $0.1) }, shifts: [], connections: []
+            )
+        }
+        var context = TalkMemoryContext()
+        // Five thoughts with three lines each is more than the limit of twelve.
+        context.thoughts = (1...5).map { number in
+            thought("Thought \(number)", (1...3).map { ("2026-11-0\($0)", "Line \($0) of thought \(number).") })
+        }
+        // The same line under a second thought.
+        context.thoughts.append(thought("Echo", [("2026-11-03", "Line 3 of thought 1.")]))
+
+        let lines = Prompts.earlierLines(from: context)
+
+        #expect(lines.count == Prompts.earlierLineLimit)
+        #expect(lines.map(\.number) == Array(1...12))
+        // Every thought keeps its most recent line.
+        for number in 1...5 {
+            #expect(lines.contains { $0.quote == "Line 3 of thought \(number)." })
+        }
+        // Listed thought by thought, oldest first.
+        #expect(lines.prefix(3).map(\.quote) == ["Line 1 of thought 1.", "Line 2 of thought 1.", "Line 3 of thought 1."])
+        // Offered once, under the first thought that has it.
+        #expect(lines.filter { $0.quote == "Line 3 of thought 1." }.count == 1)
+        #expect(!lines.contains { $0.label == "Echo" })
+        #expect(Prompts.earlierLines(from: nil).isEmpty)
+    }
+
+    @Test func withMemoryTheInstructionsSayToPointAtALineAndStateNothingElse() throws {
         let context = try build(newEntry("Meera wants an answer today."))
         let system = Prompts.talkSystem(entryText: "Meera wants an answer today.", entryDate: MemoryWeek.day(10), memory: context)
 
         #expect(system.hasPrefix(Prompts.talkVoiceWithMemory))
-        #expect(system.contains("name the day it was written"))
-        #expect(system.contains("State nothing about their past that is not in the notes or the entry."))
-        #expect(system.contains("Never recite the profile"))
+        #expect(system.contains("write its number in curly brackets"))
+        #expect(system.contains("Never type out an earlier line yourself, and never state the day yourself."))
+        #expect(system.contains("State nothing about their past that is not in these lines or the entry."))
+        #expect(system.contains("never recite it"))
         #expect(!system.contains("You cannot see their other entries."))
-        // The safety behaviour is unchanged.
-        #expect(system.contains("Tele-MANAS on 14416"))
-        // Order: voice, then memory, then the entry.
-        let memoryAt = try #require(system.range(of: "<memory>"))
+        // The safety behaviour is the same with memory as without.
+        #expect(system.contains(Prompts.talkSafety))
+        // Order: voice, then the earlier lines, then the entry.
+        let memoryAt = try #require(system.range(of: "<earlier>"))
         let entryAt = try #require(system.range(of: "<entry>"))
         #expect(memoryAt.lowerBound < entryAt.lowerBound)
     }
 
-    @Test func withoutMemoryTheInstructionsAreExactlyAsBefore() {
+    @Test func withoutMemoryTheInstructionsAreForTheEntryOnly() {
         let plain = Prompts.talkSystem(entryText: "Meera wants an answer today.", entryDate: MemoryWeek.day(10))
         let withNothing = Prompts.talkSystem(entryText: "Meera wants an answer today.", entryDate: MemoryWeek.day(10), memory: TalkMemoryContext())
 
         #expect(plain == withNothing)
         #expect(plain.hasPrefix(Prompts.talkVoice))
         #expect(plain.contains("You cannot see their other entries."))
-        #expect(!plain.contains("<memory>"))
+        #expect(!plain.contains("<earlier>"))
+        #expect(!plain.contains("curly brackets"))
     }
 }
 
@@ -230,8 +274,9 @@ import Testing
 
         let system = try #require(provider.requests.first?.system)
         #expect(system.hasPrefix(Prompts.talkVoiceWithMemory))
-        #expect(system.contains("<memory>"))
-        #expect(system.contains("Monday 2 November 2026, they wrote: \"I keep replaying the call with Meera about the launch.\""))
+        #expect(system.contains("<earlier>"))
+        #expect(system.contains("} Monday 2 November 2026, about "))
+        #expect(system.contains("\"I keep replaying the call with Meera about the launch.\""))
         #expect(system.contains("<entry>\nMeera wants an answer today and I still don't have one.\n</entry>"))
         #expect(talk.transcript.messages.map(\.text) == ["On Monday you wrote about the call."])
     }
@@ -249,8 +294,8 @@ import Testing
         await talk.replyTask?.value
 
         let system = try #require(provider.requests.first?.system)
-        #expect(system.contains("Running (idea)."))
-        #expect(system.contains("Wednesday 4 November 2026, they wrote: \"Went for a run before work for the first time in weeks.\""))
+        #expect(system.contains("} Wednesday 4 November 2026, about "))
+        #expect(system.contains("\"Went for a run before work for the first time in weeks.\""))
     }
 
     @Test func withMemoryOffNothingFromMemoryIsSent() async throws {
@@ -266,7 +311,7 @@ import Testing
 
         let system = try #require(provider.requests.first?.system)
         #expect(system == Prompts.talkSystem(entryText: entry.text, entryDate: entry.date))
-        #expect(!system.contains("<memory>"))
+        #expect(!system.contains("<earlier>"))
         #expect(!system.contains("I keep replaying the call"))
     }
 

@@ -35,11 +35,12 @@ Each line names the service in use. They are written here as they read with Clau
 
 ## Talk
 
-Files: `freewrite/AI/Prompts.swift` (`talkDeclinedNotice`), `freewrite/Talk/TalkController.swift`, `freewrite/Talk/TalkView.swift`.
+Files: `freewrite/AI/Prompts.swift` (`talkDeclinedNotice`, `talkCareLine`), `freewrite/Talk/TalkController.swift`, `freewrite/Talk/TalkView.swift`.
 
 | When | Message |
 | --- | --- |
 | Nothing said yet | The column is blank, with "Say what's on your mind" in the box. |
+| What was written may mean danger (the app's own line, small, under a thin rule, saved in the conversation) | If you might hurt yourself, or you are in danger, please reach a person now: someone you trust, Tele-MANAS on 14416 (India), or your local emergency number. |
 | Claude declined, even after a retry | Claude declined to respond to this. If you are in danger or thinking about harming yourself, please reach someone you trust, Tele-MANAS on 14416 (India), or your local emergency services. |
 | The reply was empty | Claude answered with nothing. |
 

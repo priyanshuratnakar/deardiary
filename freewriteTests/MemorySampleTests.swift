@@ -65,7 +65,7 @@ final class MemorySampleTests: XCTestCase {
         let context = ContextBuilder.build(entry: entry, recentMessages: [], memory: built.memory, digests: built.digests)
         let system = Prompts.talkSystem(entryText: entry.text, entryDate: entry.date, memory: context)
 
-        XCTAssertTrue(system.contains("<memory>"))
+        XCTAssertTrue(system.contains("<earlier>"))
         XCTAssertTrue(system.contains("<entry>"))
 
         let attachment = XCTAttachment(string: system)

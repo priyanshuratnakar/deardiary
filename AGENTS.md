@@ -76,7 +76,7 @@ Rules the code follows (keep them when changing it):
 - **When talk speaks first.** Once, at the moment it is switched on, and only if the page has writing and that entry has no saved conversation. Showing a different entry while talk is on never sends anything by itself.
 - **What is sent.** Each request is `Prompts.talkSystem` (the voice plus the entry as it reads at that moment, between `<entry>` markers) and the conversation so far. Since M4, notes from memory are added when memory is on (see below).
 - **Off means off.** Switching talk off, switching AI off in Settings, or removing the key cancels any reply in progress and drops the partial text. A cancelled request that has not started yet is never sent.
-- **Storage.** One file per entry at `conversations/[ENTRY-UUID].md` inside the journal folder: a `# Talk` title, then `## You · yyyy-MM-dd HH:mm:ss` and `## Dear Diary · …` headings, each followed by the text. It is plain markdown and can be edited or deleted by hand. Deleting an entry deletes its conversation.
+- **Storage.** One file per entry at `conversations/[ENTRY-UUID].md` inside the journal folder: a `# Talk` title, then `## You · yyyy-MM-dd HH:mm:ss` and `## Dear Diary · …` headings (and, since M13, `## A note from Dear Diary · …` for the app's help line), each followed by the text. It is plain markdown and can be edited or deleted by hand. Deleting an entry deletes its conversation.
 - **Declined replies.** Talk requests set `retryIfDeclined`, which makes `AnthropicProvider` send `fallbacks: "default"` with the header `anthropic-beta: server-side-fallback-2026-07-01`; Anthropic then retries a declined request on a model it chooses. If a model rejects that option (HTTP 400), the provider asks again without it and remembers for the rest of the run. If the reply is still declined, the column shows `Prompts.talkDeclinedNotice`, which repeats the PRD's support options.
 - **Failure is quiet.** Errors appear as one plain sentence in the column, with a "Try again" word. They never interrupt the page.
 
@@ -162,15 +162,15 @@ Agents: never run the engine against the owner's real journal. Tests use `Memory
 
 ### M4: memory in talk
 
-When memory is on, talk is given the relevant notes from memory with each message, and is told to name the day when it draws on the past. Nothing on screen changed and `ContentView.swift` was not touched.
+When memory is on, talk is given the relevant notes from memory with each message. Nothing on screen changed and `ContentView.swift` was not touched. **M13 changed what is laid out for the model:** only the profile and numbered lines from earlier entries, and the app, not the model, writes a line and its day into a reply. What `ContextBuilder` picks is unchanged. Read M13 before changing anything here.
 
 - `freewrite/Memory/ContextBuilder.swift` picks what is sent, on the Mac, with no AI call. It always sends the profile. It sends the thoughts whose label or other names appear (as whole words, ignoring a leading "the", "a", "an" or "my") in the open entry or in the last few things said in the column, the thoughts the open entry's digest already touched, and the thoughts linked to those, one step away. Each comes with its description, its most recent quoted lines and timeline notes with their days, and its links to other thoughts being sent. The summaries of the entries behind those lines are added.
 - **Only the past is sent.** Lines that came from the open entry are left out, because talk already has the entry itself. A thought known only from the open entry is not sent.
 - **Limits** (`ContextBuilder.Limits`): six named thoughts, six neighbours, three quotes and two timeline notes each, six day summaries, and about 9,000 characters in all. When over the size limit, neighbours are dropped first, then day summaries, and named thoughts last.
-- `Prompts.swift`: the talk instructions are now built from parts. `talkManner` and `talkSafety` are always sent. Between them goes `talkKnowsTheEntryOnly` (memory off or empty; this is exactly what M2 sent) or `talkKnowsMemory` (use the notes only when they help, state nothing about the past that is not in them, name the day, never recite the profile). `talkMemoryNotes` lays the notes out between `<memory>` markers, with days written in full ("Monday 2 November 2026").
+- `Prompts.swift`: the talk instructions are built from parts. `talkManner` and `talkSafety` are always sent. Between them goes `talkKnowsTheEntryOnly` (memory off or empty) or `talkKnowsMemory` (how to point at a line from an earlier entry; state nothing about the past that is not in those lines; never recite the profile). `talkMemoryNotes` lays the profile and the numbered lines out between `<earlier>` markers, each with its day written in full ("Monday 2 November 2026") and what it was about.
 - `TalkController` reads the memory folder off the main thread before each reply, and only when `AISettings.memoryAllowed()` is true (AI on, memory on, a key saved). With memory off, nothing from the memory folder is read or sent by talk.
 - Talk does not wait for the open entry to be digested; it uses memory as it stands.
-- The rule against stating things that are not in the notes is an instruction to the model, not something the app can check.
+- The rule against stating things that are not in the notes is an instruction to the model, not something the app can check. What the app can and does guarantee, since M13, is that a line shown as the writer's earlier words is word for word what they wrote.
 
 `MemorySampleTests.testWhatTalkIsSentFromMemoryForANewEntry` attaches the full instructions talk would be sent for a sample entry, which is the easiest way to read exactly what leaves the Mac with a talk message.
 
@@ -523,15 +523,54 @@ If the lock ever cannot be opened, the app can be started unlocked from Terminal
 
 Not built: a menu item or shortcut to lock, and any encryption of the files.
 
+### M13: Talk that is specific
+
+Step 2 of "Making the AI layer better" (below). The owner found Talk generic; the research and the tested draft are in `docs/research/`. No new buttons and no new settings. `ContentView.swift`, the entitlements and the project file were not touched. Memory's own instructions (digest and tidy) were not touched either.
+
+**What changed for the user**
+
+- **A new voice.** A close friend who read every word, not "a thoughtful therapist" (the PRD's wording was changed to match, with the owner's approval). Replies use the writer's own words in quote marks, do one thing, and never open with "It sounds like" and its cousins.
+- **Never two questions in a row.** After a reply that asked something, the next one says back what was heard and asks nothing.
+- **Earlier days, word for word.** When a reply brings up an earlier entry, the line and its day are written by the app from memory, drawn grey beside a thin rule.
+- **A help line that is the app's own.** When what was written may mean danger, one small line saying where to reach a person appears in the column at once. No model writes it.
+
+**Files**
+
+- `freewrite/AI/Prompts.swift`: `talkManner` (the voice, what a good reply does, the rules, six examples), `talkKnowsTheEntryOnly`, `talkKnowsMemory`, `talkSafety`, the two notes for one reply (`talkNoQuestionNote`, `talkDangerNote`), `talkCareLine` (the help line), `TalkTurn`, `talkSystem(entryText:entryDate:memory:turn:)`, `earlierLines(from:)` and `talkMemoryNotes`.
+- `freewrite/Talk/TalkReply.swift` (new): `EarlierLine`, `TalkPassage` (a saved reply split into plain words and earlier lines) and `TalkReply` (what the column shows for what a model wrote, and what a model is shown of its own past replies).
+- `freewrite/Talk/CareNet.swift` (new): the app's own net of plain phrases.
+- `freewrite/Talk/TalkController.swift`: `turn(for:)`, `sinceLastReply`, `showCareLineIfNeeded`, `history(from:lines:)`, `TalkLimits`.
+- `freewrite/Talk/ConversationStore.swift`: a third speaker, `.note`, saved as `## A note from Dear Diary`.
+- `freewrite/Talk/TalkView.swift`: `drawingOrder`, and the drawing of an earlier line and of the help line.
+
+**Rules the code follows (keep them when changing it)**
+
+1. **The model never types an earlier line or its day.** It is given numbered lines and points at one by writing its number in curly brackets, like `{2}`. `TalkReply.shown` puts the line there as its own paragraph, `> Monday 2 November 2026: "the words"`, from memory. A number that is not on offer is taken out, a line is written out once, and a `>` typed by a model is taken off, so nothing a model made up can be drawn as the writer's earlier words. This exists because a model asked to retype a line changed a word of it.
+2. **A model sees its own past replies the way it is asked to write them.** `history(from:lines:)` turns a written-out line back into its number if that line is still on offer and leaves it out if not, and puts the care mark back on a reply that came with the help line.
+3. **What memory gives Talk is the profile and at most twelve numbered lines** (`Prompts.earlierLineLimit`): each with its day and the name of the thought it belongs to. Every thought's most recent line is taken first, so no thought crowds out the others, and a line under two thoughts is offered once. `ContextBuilder` still picks descriptions, timeline notes, links and day summaries, but they are no longer laid out for the model: only what the app can show word for word is. Do not add the AI's own notes back without asking.
+4. **The help line is the app's.** It is always `Prompts.talkCareLine`. The model is never given the phone number and is told not to list numbers. The line is never sent to a model.
+5. **When the help line shows.** (a) `CareNet` finds danger words in the message just sent, or in the entry if this conversation has not shown the line yet: the line is saved and shown at once, before any reply, so it is there even if no reply comes; that reply is sent `talkDangerNote` and nothing from memory. (b) The model marks its reply `[care]` (never shown) or asks "are you safe": the line is shown with that reply, unless it is already among the six lines above (`TalkLimits.careLineGap`).
+6. **Where the help line sits.** It is saved just before the reply it belongs with and drawn under that reply (`TalkColumn.drawingOrder`); while that reply is on its way it waits below the "…". A conversation that holds only the help line still lets talk speak first.
+7. **`CareNet` is short and literal on purpose.** Whole words only ("want to diet" is not "want to die"). Phrases are written in plain lower case, the way `CareNet.words` reads text; a test checks this. A saying that trips it goes in `figuresOfSpeech`. It answers yes or no, records nothing, and must never be logged. It will miss indirect wording, which is why the model is asked to notice too.
+8. **Never two questions in a row is the app's rule.** `turn(for:)` gives `.noQuestion` when the last reply asked something, the writer has answered, the writer did not ask something themselves (`TalkReply.writerAsks`, with or without a question mark), and that last reply did not come with the help line. Left to the model, the rule was not kept.
+9. **A turn is worked out from the saved conversation alone**, so "Try again" sends the same instructions as the first try.
+10. **The prompt pieces are `static let` strings** so `compare.py` can read them. The examples in `talkManner` must keep the rules they teach, because models copy examples: a test checks every example reply (no stock opener, at most one question, the writer's words in quote marks).
+
+**Measured** on 12 Nov 2026 with `gemma4:12b` and made-up entries (see "After the Talk build" in `docs/research/model-comparison.md`): no reply with two questions, none asked when told not to, the help line on the page 5 times of 5 and never when nobody was in danger, and the right earlier line pointed at. One conversation was also run through the real `TalkController` and `OllamaProvider`.
+
+**Weak spots that remain** (the model's, not the app's): it sometimes reads more into a short answer than is there, a question sometimes leans, and it can quote the open entry slightly wrong. Only earlier lines are guaranteed word for word; quotes from today's entry are still the model's typing. Checking those against the entry, as memory does with `QuoteMatcher`, is not built.
+
+Tests: `TalkReplyTests.swift` (`TalkReplyTests`, `CareNetTests`, `TalkCareTests`, `TalkQuestionTests`, `TalkEarlierLineTests`, `TalkColumnOrderTests`), more in `TalkControllerTests.swift` and `ContextBuilderTests.swift`, and three more pictures in `TalkSnapshotTests.swift`. Not tried: the new instructions with Claude or OpenAI, and the column in the installed app with a real reply arriving.
+
 ### Making the AI layer better (in progress)
 
 The owner found the memory generic (not shaped for a journal or for mental health) and Talk generic. The research, a baseline and the plan are in `docs/research/ai-layer.md`. Three steps:
 
 1. **A better local model, measured. Done** (`docs/research/model-comparison.md`). `gemma4:12b` is the local model to use on the owner's Mac (M5 Pro, 24 GB), for both jobs; the app's saved local models were switched to it. This step found and fixed rules 10 and 11 of M8. Therapy-tuned open models were looked at and rejected: none has an independent evaluation, and general models did better in the studies found.
-2. **Talk that is specific. Not built.** A draft of the new instructions that tested well is `scripts/model-check/talk-new.txt`: a plain voice instead of "a thoughtful therapist", a small set of moves to pick from, examples, memory used for contrast, and no private thinking step (it failed on the local model). Open points: it still asks a question in almost every reply, and the crisis wording should not rest on the model alone.
+2. **Talk that is specific. Done:** M13 above. The draft files it grew from are gone from `scripts/model-check/`; the app's own instructions are the only copy.
 3. **Memory shaped for a journal. Not built.** A draft first pass is `scripts/model-check/memory-new.txt`: people, feelings in the writer's own words marked pleasant or unpleasant, events, self-talk, what helped, what matters, open loops. Patterns are to be counted by the app, not written by the model.
 
-`scripts/model-check/compare.py` runs the 18 made-up entries in `entries.py` through a model in the local Ollama and measures both jobs. It reads the app's instructions from the Swift source. Use it before changing a prompt or recommending a model. Show each step to the owner before building it, as always.
+`scripts/model-check/compare.py` runs the made-up entries in `entries.py` through a model in the local Ollama and measures both jobs (`memory-app`, `memory-new`, `talk-app`, `talk-hard-app`). It reads the app's instructions and the safety net's phrases from the Swift source, and for Talk it does what the app does around the model, so it measures what the app would really send and show. Use it before changing a prompt or recommending a model. Show each step to the owner before building it, as always.
 
 ### Credit
 

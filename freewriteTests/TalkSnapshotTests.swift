@@ -63,6 +63,60 @@ final class TalkSnapshotTests: XCTestCase {
         XCTAssertEqual(talk.transcript.notice, Prompts.talkDeclinedNotice)
     }
 
+    /// A reply that brings up an earlier day. The grey line beside the rule, and its day,
+    /// are written by the app from memory, not by the model.
+    @MainActor
+    func testAnEarlierLineInLightMode() async throws {
+        let sandbox = TalkSandbox()
+        let earlier = EarlierLine(
+            number: 1, date: "2026-11-02", label: "Meera",
+            quote: "I said yes to everything she asked and then felt sick about it for the rest of the day."
+        )
+        let start = Date(timeIntervalSince1970: 1_793_995_000)
+        sandbox.store.save([
+            TalkMessage(speaker: .diary, text: earlier.asQuoted + "\n\nToday it's \"I needed to think about it\", and you \"slept fine\". What was different about how you answered her this time?", date: start),
+            TalkMessage(speaker: .you, text: "yeah. it felt different this time.", date: start.addingTimeInterval(40)),
+            TalkMessage(speaker: .diary, text: "It felt different because you told her you \"needed to think about it\", and nothing fell apart.", date: start.addingTimeInterval(55)),
+        ], entryID: TalkFixtures.entryID)
+        let talk = sandbox.controller(FakeProvider())
+        talk.toggle()
+        talk.show(entry: TalkFixtures.entry)
+
+        attach(try renderOffscreen(column(talk, dark: false), size: columnSize, dark: false), named: "talk-light-earlier-line")
+        attach(try renderOffscreen(column(talk, dark: true), size: columnSize, dark: true), named: "talk-dark-earlier-line")
+        XCTAssertEqual(TalkPassage.split(talk.transcript.messages[0].text).first, .earlier(day: "Monday 2 November 2026", quote: earlier.quote))
+    }
+
+    /// The app's own help line, under the reply it came with.
+    @MainActor
+    func testTheHelpLineInDarkAndLightMode() async throws {
+        let sandbox = TalkSandbox()
+        let talk = sandbox.controller(FakeProvider([.reply(["[care]\nAre you safe right now? I'm glad you wrote this down somewhere."])]))
+        talk.toggle()
+        talk.show(entry: TalkEntry(id: TalkFixtures.entryID, text: "I hurt myself again last night. I don't want to talk about why. I just needed to write it somewhere.", date: nil))
+        await talk.replyTask?.value
+
+        attach(try renderOffscreen(column(talk, dark: true), size: columnSize, dark: true), named: "talk-dark-help-line")
+        attach(try renderOffscreen(column(talk, dark: false), size: columnSize, dark: false), named: "talk-light-help-line")
+        XCTAssertEqual(talk.transcript.messages.map(\.speaker), [.note, .diary])
+        XCTAssertEqual(talk.transcript.messages.first?.text, Prompts.talkCareLine)
+    }
+
+    /// The help line is on the page before any reply has come.
+    @MainActor
+    func testTheHelpLineWhileWaitingForAReply() async throws {
+        let sandbox = TalkSandbox()
+        let talk = sandbox.controller(FakeProvider([.hang]))
+        talk.toggle()
+        talk.show(entry: TalkFixtures.emptyEntry)
+        talk.send("some days i just want to die")
+
+        attach(try renderOffscreen(column(talk, dark: true), size: columnSize, dark: true), named: "talk-dark-help-line-waiting")
+        XCTAssertTrue(talk.transcript.isWaiting)
+        XCTAssertEqual(talk.transcript.messages.last?.speaker, .note)
+        talk.turnOff()
+    }
+
     @MainActor
     func testEmptyColumnWaitsForYou() async throws {
         let sandbox = TalkSandbox()

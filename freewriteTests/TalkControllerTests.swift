@@ -371,25 +371,70 @@ import Testing
     @Test func theVoiceCarriesEverythingThePRDAsksFor() {
         let voice = Prompts.talkVoice
 
-        // Reflects and asks, one question at a time, short plain prose.
-        #expect(voice.contains("one question"))
+        // A close friend who read every word. Short plain prose, at most one question.
+        #expect(voice.contains("close friend who read every word"))
         #expect(voice.contains("plain prose"))
-        // Does not flatter, soothe, diagnose or label.
-        #expect(voice.contains("Do not flatter"))
-        #expect(voice.contains("agree just to soothe"))
-        #expect(voice.contains("Do not diagnose"))
-        #expect(voice.contains("do not label"))
+        #expect(voice.contains("At most one question in a reply."))
+        // Uses their own words, and does not open with a stock phrase.
+        #expect(voice.contains("Use their own words, in double quote marks"))
+        #expect(voice.contains("Never begin with \"It sounds like\""))
+        // Does not flatter, agree to be kind, diagnose, label, or judge people it has not met.
+        #expect(voice.contains("do not flatter"))
+        #expect(voice.contains("Do not agree just to be kind"))
+        #expect(voice.contains("Do not diagnose or label"))
+        #expect(voice.contains("Do not judge the people they mention"))
         // Points toward real people; is honest about not being a therapist.
         #expect(voice.contains("real people in their life"))
         #expect(voice.contains("not a therapist"))
         // Only states what it can tie to the entry.
-        #expect(voice.contains("cannot see their other entries"))
-        // Safety: drop the reflective style, ask if safe, name the three places to turn.
-        #expect(voice.contains("drop the reflective style"))
+        #expect(voice.contains("You cannot see their other entries."))
+        // Safety: drop everything else, ask if safe, mark the reply, leave the numbers to the app.
+        #expect(voice.contains("drop everything above"))
         #expect(voice.contains("whether they are safe right now"))
-        #expect(voice.contains("someone they trust"))
-        #expect(voice.contains("Tele-MANAS on 14416"))
-        #expect(voice.contains("local emergency services"))
+        #expect(voice.contains("Start your reply with [care] on a line of its own."))
+        #expect(voice.contains("do not list numbers yourself"))
+        #expect(voice.contains("Ordinary figures of speech are not danger"))
+    }
+
+    @Test func theExamplesKeepTheRulesTheyTeach() {
+        // Models copy examples more closely than rules, so the examples must not break one.
+        let replies = Prompts.talkManner
+            .components(separatedBy: "\n")
+            .filter { $0.hasPrefix("Reply: ") }
+            .map { String($0.dropFirst("Reply: ".count)) }
+        #expect(replies.count == 6)
+
+        let stockOpeners = ["It sounds like", "It seems", "I hear", "I understand", "I notice", "I'm here", "That must be"]
+        for reply in replies {
+            #expect(!stockOpeners.contains(where: { reply.hasPrefix($0) }))
+            #expect(reply.filter { $0 == "?" }.count <= 1)
+            #expect(!reply.lowercased().contains("tell me more"))
+            // Each one uses the writer's own words, in quote marks.
+            #expect(reply.contains("\""))
+        }
+        // Some replies ask nothing at all.
+        #expect(replies.contains { !$0.contains("?") })
+    }
+
+    @Test func theHelpLineIsTheAppsOwnAndNamesWhereToTurn() {
+        #expect(Prompts.talkCareLine.contains("someone you trust"))
+        #expect(Prompts.talkCareLine.contains("Tele-MANAS on 14416"))
+        #expect(Prompts.talkCareLine.contains("local emergency number"))
+        // The model is never given the numbers to repeat.
+        #expect(!Prompts.talkVoice.contains("14416"))
+        #expect(!Prompts.talkVoiceWithMemory.contains("14416"))
+    }
+
+    @Test func aNoteForOneReplyGoesLastSoItIsTheFreshestThingRead() {
+        let ordinary = Prompts.talkSystem(entryText: "Couldn't sleep again.", entryDate: nil)
+        let noQuestion = Prompts.talkSystem(entryText: "Couldn't sleep again.", entryDate: nil, turn: .noQuestion)
+        let danger = Prompts.talkSystem(entryText: "Couldn't sleep again.", entryDate: nil, turn: .danger)
+
+        #expect(!ordinary.contains("For this reply only"))
+        #expect(noQuestion == ordinary + "\n\n" + Prompts.talkNoQuestionNote)
+        #expect(danger == ordinary + "\n\n" + Prompts.talkDangerNote)
+        #expect(Prompts.talkNoQuestionNote.contains("Do not ask another question now."))
+        #expect(Prompts.talkDangerNote.contains("If they may be in danger"))
     }
 
     @Test func theEntryIsHandedOverBetweenClearMarkers() {

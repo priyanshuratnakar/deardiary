@@ -17,6 +17,10 @@ struct TalkMessage: Equatable {
     enum Speaker: String {
         case you = "You"
         case diary = "Dear Diary"
+        /// The app's own line about where to reach help (`Prompts.talkCareLine`). No model
+        /// writes it and it is never sent to one. It is saved just before the reply it came
+        /// with, so it is on the page at once, and the column draws it under that reply.
+        case note = "A note from Dear Diary"
     }
 
     let speaker: Speaker

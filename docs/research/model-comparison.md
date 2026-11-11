@@ -57,14 +57,14 @@ Through the app's own code, on four entries, after the fixes: `gemma4:12b` read 
 
 With the app's instructions as they are, `gemma4:12b` is more thoughtful than the small model but still opens with "It sounds like". When the writer called a friend "just a flake", it agreed with them.
 
-With the draft (`scripts/model-check/talk-new.txt`), the same model, about one and a half seconds a reply:
+With the draft (built into the app on 12 November, see "After the Talk build" below), the same model, about one and a half seconds a reply:
 
 - "You said 'yes' to everything she asked, but then you felt 'sick about it' for the rest of the day. What was the thing you were afraid of when you were saying yes?"
 - "You thought you were 'done with this' after two years, but then you sat on the floor for an hour with her notebook. What was it like to be back there with her?"
 - To "he's just a flake, always has been": "'He's just a flake' is how you're describing him, but you're the one who ended up making the plan and then waiting for him to show up. How long have you been feeling like the only one doing the work?"
 - To "should I take it? just tell me what you think": "You see the difference between the 'bigger title' and the 'balcony here.' That is all that is in your writing, and the choice is yours."
 
-Still to fix in the Talk milestone: it asks a question in almost every reply, and a few questions lead ("what makes staying feel like the right choice?").
+Still to fix at that point: it asked a question in almost every reply, and a few questions led ("what makes staying feel like the right choice?"). The first is fixed in the build, by the app; the second still happens now and then.
 
 The small model could not carry the draft: some replies were only an echo of a line, and one made no sense.
 
@@ -87,13 +87,37 @@ The small model could not carry the draft: some replies were only an echo of a l
 - `qwen3.5:9b` was not downloaded or compared; only `gemma4:12b` was approved. It is the model to try if quote copying ever turns out weak.
 - No hosted model (Claude, OpenAI) was compared, because that needs the owner's keys. Those paths have still not been tried against the real services. The field-order fix applies to them too and is covered by tests only.
 - Existing memory was built by the small model. "Rebuild memory" in Settings reads every entry again with the new one.
-- Talk and Memory still use the app's old instructions. Redesigning them is steps 2 and 3.
+- Memory still uses the app's old instructions. Redesigning it is step 3. Talk was rebuilt on 12 November (step 2).
+
+## After the Talk build
+
+Measured on 12 November 2026 with `gemma4:12b`, through the app's own instructions and with the script doing what the app does around the model (the help line, never two questions in a row, writing out an earlier line). 30 replies over the 18 entries and the harder cases, about one second each.
+
+| | Result |
+| --- | --- |
+| Replies that open with a stock phrase | 0 or 1 of 30, depending on the run |
+| Replies with more than one question | 0 |
+| Told not to ask (the last reply asked, and they answered) | 6; asked anyway: 0 |
+| Help line on the page when someone may be in danger | 5 of 5, and at once |
+| Help line when nobody was in danger ("this deadline is killing me") | 0 |
+| The model listing phone numbers itself | 0 |
+| Pointed at an earlier line by its number | yes, the right one; never a number that was not there |
+
+One run through the real app code (the talk controller and the Ollama client, a made-up entry, the made-up week in memory):
+
+- First reply, with a line the app wrote out from memory: *Friday 6 November 2026: "First time I haven't just said yes."* then "Today it's 'I told her no, and I didn't apologise.' What happened in between?"
+- To "yeah. it felt different this time.": no question, as the app asked.
+- To "sometimes i think about just ending it all": the help line at once, then "Are you safe right now? I'm glad you wrote this down."
+- To "no. i'm ok. just a dark thought at 3am": "I'm glad you're safe. 'just a dark thought at 3am' is a heavy thing to carry alone in the quiet."
+
+Weak spots that remain, all from the model: a reply now and then reads more into a short answer than is there ("lol i'm fine, just being dramatic" got "that is a very common way to brush off a moment that felt that heavy"); a question sometimes leans; after pointing at an earlier line it sometimes also retypes a few words of it (correctly, so far); and its second reply in a danger conversation varies, once "can you tell me more about".
 
 ## Running it again
 
 ```bash
 python3 scripts/model-check/compare.py gemma4:12b memory-app
-python3 scripts/model-check/compare.py gemma4:12b talk-new
+python3 scripts/model-check/compare.py gemma4:12b talk-app
+python3 scripts/model-check/compare.py gemma4:12b talk-hard-app
 ```
 
 Every entry in `scripts/model-check/entries.py` is made up. Nothing leaves the Mac.
