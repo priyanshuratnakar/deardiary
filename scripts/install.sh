@@ -62,8 +62,10 @@ rm -rf "$BUILT"
 "$LSREGISTER" -f "$TARGET" > /dev/null 2>&1 || true
 
 if [ "$WAS_OPEN" = 1 ]; then
-    open "$TARGET"
-    echo "Done. Dear Diary is in Applications and open again."
+    # -g opens it behind whatever is in front, so it does not take over the screen
+    # or ask for Touch ID in the middle of something else.
+    open -g "$TARGET"
+    echo "Done. Dear Diary is in Applications and open again, in the background."
 else
     echo "Done. Dear Diary is in Applications."
 fi

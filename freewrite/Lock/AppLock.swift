@@ -49,7 +49,9 @@ final class AppLock: ObservableObject {
     /// background. Never straight after "Lock now", and never straight after the sheet was
     /// closed, so a closed sheet does not come back by itself.
     private var asksByItself: Bool
-    private var isInBackground = false
+    /// True while another app is in front. Kept from the app's own "went to the background"
+    /// and "came back" events, and read from the app at the start.
+    private var isInBackground: Bool
     private var observers: [NSObjectProtocol] = []
 
     enum Line {
@@ -75,6 +77,8 @@ final class AppLock: ObservableObject {
         let opensLocked = settings.enabled && authenticator.isAvailable()
         self.isLocked = opensLocked
         self.asksByItself = opensLocked
+        // The app may be started without being brought to the front. Then it waits too.
+        self.isInBackground = watchesTheMac ? !(NSApp?.isActive ?? false) : false
         if watchesTheMac {
             watch()
         }
@@ -107,8 +111,13 @@ final class AppLock: ObservableObject {
 
     /// Asks without waiting for a click, if this is one of the moments for it. Called when
     /// the locked window comes into view and when Dear Diary comes back to the front.
+    ///
+    /// It never asks while Dear Diary is in the background. The lock can close there (after
+    /// the chosen time away, or when the Mac sleeps), and its window then shows the locked
+    /// screen, but macOS's sheet would land on top of whatever else the user is doing. The
+    /// question waits until they come back.
     func askIfJustLocked() {
-        guard isLocked, asksByItself, !isAsking else { return }
+        guard isLocked, asksByItself, !isAsking, !isInBackground else { return }
         Task { await unlock() }
     }
 

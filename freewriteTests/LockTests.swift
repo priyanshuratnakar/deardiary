@@ -249,6 +249,60 @@ import Testing
         #expect(box.check.reasons.count == 2)
     }
 
+    @Test func itNeverAsksWhileAnotherAppIsInFront() async {
+        let box = LockBox()
+        let lock = await box.openLock()
+        box.check.answers = [.allowed]
+
+        // Dear Diary sits in the background until the lock closes by itself.
+        lock.appWentToBackground()
+        box.minutesPass(6)
+        lock.lockIfAwayTooLong()
+        #expect(lock.isLocked)
+        // Its window now shows the locked screen, which asks when it comes into view.
+        lock.askIfJustLocked()
+        await box.settle()
+        // Nothing may be asked: the user is in another app.
+        #expect(box.check.reasons.count == 1)
+        #expect(lock.isLocked)
+
+        // The question waits for them to come back.
+        lock.appCameBack()
+        await box.settle()
+        #expect(box.check.reasons.count == 2)
+        #expect(!lock.isLocked)
+    }
+
+    @Test func theMacSleepingInTheBackgroundDoesNotAskEither() async {
+        let box = LockBox()
+        let lock = await box.openLock()
+
+        lock.appWentToBackground()
+        lock.macSteppedAway()
+        lock.askIfJustLocked()
+        await box.settle()
+
+        #expect(lock.isLocked)
+        #expect(box.check.reasons.count == 1)
+    }
+
+    @Test func aLockedDiaryLeftInTheBackgroundStaysQuiet() async {
+        let box = LockBox()
+        let lock = await box.openLock()
+        lock.lockNow()
+
+        // Away for an hour, with the locked window coming into view now and then.
+        lock.appWentToBackground()
+        for _ in 0..<5 {
+            box.minutesPass(12)
+            lock.lockIfAwayTooLong()
+            lock.askIfJustLocked()
+        }
+        await box.settle()
+
+        #expect(box.check.reasons.count == 1)
+    }
+
     @Test func aSheetThatWasClosedDoesNotComeStraightBack() async {
         let box = LockBox()
         let lock = await box.openLock()
