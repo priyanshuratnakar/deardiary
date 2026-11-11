@@ -21,6 +21,20 @@
 //  ({"error": "..."}, also part-way through a stream) and the list of
 //  installed models.
 //
+//  Two settings were added on 12 Nov 2026 after trying real models on made-up
+//  entries (see docs/research/model-comparison.md):
+//
+//  - "think": false, on every request. Newer open models think before they
+//    answer unless told not to. Left to itself, gemma4:12b spent a whole
+//    request thinking and returned nothing at all for memory, 18 times out of
+//    18, and in talk it left 8 replies out of 13 empty after about 20 seconds
+//    each. With thinking off it was complete and took about a second. A model
+//    that cannot think accepts the setting and ignores it.
+//  - "options.temperature": 0, when the reply must be JSON. Reading an entry
+//    for memory is copying, not writing: quotes came back word for word more
+//    often (83% to 96% on a small model), and the same entry gives the same
+//    notes. Talk keeps each model's own setting.
+//
 
 import Foundation
 
@@ -195,24 +209,35 @@ final class OllamaProvider: LLMProvider, @unchecked Sendable {
         }
         messages += request.messages.map { ["role": $0.role.rawValue, "content": $0.text] }
 
+        var options: [String: Any] = [
+            // Room to read an entry together with its memory, and a ceiling on the reply.
+            "num_ctx": AILimits.localContextTokens,
+            "num_predict": request.maxTokens,
+        ]
+        if request.jsonSchema != nil {
+            // The reply is notes copied from an entry, so it should not vary from one try to the next.
+            options["temperature"] = 0
+        }
+
         var body: [String: Any] = [
             "model": request.model,
             "messages": messages,
             "stream": true,
-            "options": [
-                // Room to read an entry together with its memory, and a ceiling on the reply.
-                "num_ctx": AILimits.localContextTokens,
-                "num_predict": request.maxTokens,
-            ],
+            "options": options,
+            // Answer straight away, without a private thinking step first.
+            "think": false,
         ]
-        if schema, let schemaData = request.jsonSchema {
-            body["format"] = try JSONSerialization.jsonObject(with: schemaData)
+        // The shape goes in as its own text, so its fields keep the order they are written in.
+        let slot = SchemaSlot()
+        let shape = schema ? request.jsonSchema : nil
+        if shape != nil {
+            body["format"] = slot.placeholder
         }
 
         var urlRequest = URLRequest(url: base.appendingPathComponent("api/chat"))
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "content-type")
-        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+        urlRequest.httpBody = slot.fill(try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]), with: shape)
         return urlRequest
     }
 

@@ -59,7 +59,7 @@ To put the app in your Applications folder instead, run this from the project fo
 
 Open Settings from the Dear Diary menu, or press ⌘ and comma, and turn AI on.
 
-- **On this Mac.** Install [Ollama](https://ollama.com), download a model (for example `ollama pull llama3.2`), then choose "On this Mac". Dear Diary lists the models you have. A larger model writes better memory if your Mac has room for one.
+- **On this Mac.** Install [Ollama](https://ollama.com), download a model, then choose "On this Mac". Dear Diary lists the models you have. `ollama pull gemma4:12b` (about 8 GB) is the one this was tested with, on a Mac with 24 GB of memory. `ollama pull llama3.2` (2 GB) runs on smaller Macs, but its replies and notes are noticeably weaker.
 - **OpenAI or Claude.** Paste your own API key and pick a model from the list. A ChatGPT or Claude subscription does not include this; it needs an API key.
 - **Other.** Give the address of any service that speaks the OpenAI chat format.
 
@@ -80,7 +80,7 @@ All of it is plain text you can read, edit or delete by hand.
 
 ## Where it stands
 
-This is a personal project and it is early. It has about 500 automated tests. Running on this Mac through Ollama and the lock have been used for real. The OpenAI and Claude paths are covered by tests but have not yet been tried against the real services.
+This is a personal project and it is early. It has about 500 automated tests. Running on this Mac through Ollama and the lock have been used for real. Talk and Memory are being reworked to be more specific; the research behind that is in `docs/research`. The OpenAI and Claude paths are covered by tests but have not yet been tried against the real services.
 
 ## Working on the code
 

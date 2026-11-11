@@ -564,6 +564,10 @@ import Testing
         #expect(options["num_ctx"] as? Int == AILimits.localContextTokens)
         #expect(AILimits.localContextTokens >= 16_000)
         #expect(options["num_predict"] as? Int == 256)
+        // Talk keeps the model's own way of choosing words.
+        #expect(options["temperature"] == nil)
+        // Models that think before answering are told not to: left alone, they can spend the whole reply on it.
+        #expect(body["think"] as? Bool == false)
 
         let messages = try #require(body["messages"] as? [[String: String]])
         #expect(messages == [
@@ -581,6 +585,20 @@ import Testing
 
         let without = ProviderFixtures.body(of: try OllamaProvider.makeURLRequest(for: request, base: base, schema: false))
         #expect(without["format"] == nil)
+    }
+
+    @Test func readingForMemoryIsSteadyAndNeverThinksFirst() throws {
+        var request = Fixtures.request
+        request.jsonSchema = DigestSchema.data
+
+        // With the required shape, and when a model has refused the shape and is asked again without it.
+        for schema in [true, false] {
+            let body = ProviderFixtures.body(of: try OllamaProvider.makeURLRequest(for: request, base: base, schema: schema))
+            let options = try #require(body["options"] as? [String: Any])
+            #expect(options["temperature"] as? Int == 0)
+            #expect(options["num_ctx"] as? Int == AILimits.localContextTokens)
+            #expect(body["think"] as? Bool == false)
+        }
     }
 
     @Test func aStreamedReplyArrivesPieceByPieceWithoutThePrivateThinking() async {

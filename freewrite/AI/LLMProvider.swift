@@ -262,3 +262,33 @@ struct ThinkTagFilter {
         return ""
     }
 }
+
+/// Puts a required reply shape (a JSON schema) into a request exactly as it is written.
+///
+/// A model writes its reply in the order the shape lists its fields. The shapes in this app
+/// are written in the order that makes sense to fill in: the name of a thought before its
+/// kind, what an entry is about before the details. The clients build their requests as
+/// dictionaries and write them out with sorted keys, which used to sort the shape too, at
+/// every level, so a model had to give a thought's other names and kind before its name.
+/// A capable local model (gemma4:12b) never finished such a reply; a small one returned
+/// thin notes. Found on 12 Nov 2026 by replaying the app's exact request.
+///
+/// So the shape is not passed through a dictionary at all. A client puts `placeholder`
+/// where the shape belongs, writes the request out, and `fill` swaps the shape's own text in.
+struct SchemaSlot {
+    /// Different for every request, so nothing a person wrote can be mistaken for it.
+    let placeholder = "schema-slot-" + UUID().uuidString
+
+    /// The request body with the shape's own text where the placeholder stood.
+    /// With no shape, or if the placeholder is not there, the body is returned as it is.
+    func fill(_ body: Data, with schema: Data?) -> Data {
+        guard let schema,
+              let text = String(data: body, encoding: .utf8),
+              let shape = String(data: schema, encoding: .utf8) else {
+            return body
+        }
+        let quoted = "\"\(placeholder)\""
+        guard text.contains(quoted) else { return body }
+        return Data(text.replacingOccurrences(of: quoted, with: shape).utf8)
+    }
+}

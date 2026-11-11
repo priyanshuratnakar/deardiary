@@ -330,7 +330,7 @@ New and changed files, all in `freewrite/AI/` unless noted:
 - `Keychain.swift`: one item per service. `sibling(named:)` gives OpenAI's and Other's items beside Claude's.
 - `LLMProvider.swift`: `AIRouter` (sends each request to the chosen service, and refuses a request with no model), `LLMError.userMessage(for:)` (the same problem described in the name of the service in use), `AIModelChoice`, and `ThinkTagFilter` (drops private thinking that some open models mix into a reply as `<think>…</think>`).
 - `OpenAICompatibleProvider.swift`: the OpenAI chat format over `URLSession`. `POST {base}/chat/completions`, streamed, ending with `data: [DONE]`. For OpenAI it sends `max_completion_tokens` and asks for token counts; for "Other" it sends the older `max_tokens`. A required JSON shape goes as `response_format` with a strict schema.
-- `OllamaProvider.swift`: Ollama's own chat format. `POST http://localhost:11434/api/chat`, streamed as one JSON object per line. It always sends `options.num_ctx` (`AILimits.localContextTokens`, 16,384), because Ollama's default of about 4,000 tokens would silently cut off an entry and its memory. That is why it does not use Ollama's OpenAI-style address, which cannot set this. A required JSON shape goes as `format`.
+- `OllamaProvider.swift`: Ollama's own chat format. `POST http://localhost:11434/api/chat`, streamed as one JSON object per line. It always sends `options.num_ctx` (`AILimits.localContextTokens`, 16,384), because Ollama's default of about 4,000 tokens would silently cut off an entry and its memory. That is why it does not use Ollama's OpenAI-style address, which cannot set this. A required JSON shape goes as `format`. Since 12 Nov 2026 it also sends `think: false` on every request and `options.temperature: 0` when the reply must be JSON (rule 10 below).
 - `AnthropicProvider.swift`: gains `models()` (`GET /v1/models?limit=100`).
 - `ModelCatalog.swift`: the list of models the chosen service offers, for the pickers.
 - `freewrite/Settings/SettingsView.swift`: the "Runs on" row, the key and address rows, `ModelPickerRow` and `ModelList` (a pop-up list in the style of freewrite's Chat pop-up).
@@ -346,6 +346,8 @@ Rules the code follows (keep them when changing it):
 7. **Only Claude gets the retry on a declined reply** (`retryIfDeclined`). The other clients ignore it.
 8. **Model names still live only in `AISettings`**, and now only as Claude's two defaults.
 9. **Old results do not linger in Settings.** The result of "Test connection" is cleared when AI, the service, its key or the talk model changes, and the word is switched off until the service is ready.
+10. **Local models are told not to think, and to be steady when copying.** `OllamaProvider` sends `think: false` always. Newer open models think before answering unless told not to, and `gemma4:12b` left alone returned nothing at all for memory (0 of 18 entries) and empty talk replies. A model that cannot think accepts the setting. It sends `temperature: 0` when the request has a JSON shape, because reading an entry is copying: quotes come back word for word more often. Talk keeps the model's own setting.
+11. **A reply shape is sent exactly as it is written.** A model writes its reply in the order the shape lists its fields. The clients write their requests with sorted keys, which used to sort the shape too, at every level, so a model had to give a thought's other names and kind before its name; `gemma4:12b` never finished such a reply. Each client now puts `SchemaSlot().placeholder` where the shape belongs and `fill` swaps the shape's own text in after the request is written out (`LLMProvider.swift`). Never pass a shape through a dictionary again, and write new shapes in the order that makes sense to fill in. `SchemaOrderTests` checks all three clients.
 
 Plain HTTP to `localhost` works from the sandboxed app with the entitlement it already has; this was tried, and no change to the project was needed.
 
@@ -520,6 +522,16 @@ Tests: `LockTests.swift` (the settings, and the lock with a clock the test contr
 If the lock ever cannot be opened, the app can be started unlocked from Terminal by adding `-lock.enabled NO` after the path to its program inside the app bundle. That overrides the saved switch for that one run.
 
 Not built: a menu item or shortcut to lock, and any encryption of the files.
+
+### Making the AI layer better (in progress)
+
+The owner found the memory generic (not shaped for a journal or for mental health) and Talk generic. The research, a baseline and the plan are in `docs/research/ai-layer.md`. Three steps:
+
+1. **A better local model, measured. Done** (`docs/research/model-comparison.md`). `gemma4:12b` is the local model to use on the owner's Mac (M5 Pro, 24 GB), for both jobs; the app's saved local models were switched to it. This step found and fixed rules 10 and 11 of M8. Therapy-tuned open models were looked at and rejected: none has an independent evaluation, and general models did better in the studies found.
+2. **Talk that is specific. Not built.** A draft of the new instructions that tested well is `scripts/model-check/talk-new.txt`: a plain voice instead of "a thoughtful therapist", a small set of moves to pick from, examples, memory used for contrast, and no private thinking step (it failed on the local model). Open points: it still asks a question in almost every reply, and the crisis wording should not rest on the model alone.
+3. **Memory shaped for a journal. Not built.** A draft first pass is `scripts/model-check/memory-new.txt`: people, feelings in the writer's own words marked pleasant or unpleasant, events, self-talk, what helped, what matters, open loops. Patterns are to be counted by the app, not written by the model.
+
+`scripts/model-check/compare.py` runs the 18 made-up entries in `entries.py` through a model in the local Ollama and measures both jobs. It reads the app's instructions from the Swift source. Use it before changing a prompt or recommending a model. Show each step to the owner before building it, as always.
 
 ### Credit
 

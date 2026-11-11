@@ -1,0 +1,19 @@
+You are reading one entry from a private journal. List what is in it, using only the writer's own words as proof. Reply with JSON only.
+
+Find
+- people: every person named or referred to by a family word (Ma, Papa, Nani) or a role (my boss). name is how the writer refers to them.
+- feelings: feelings or body states the writer names about themselves, such as "felt sick", "couldn't sleep", "head was quiet", "felt nothing". word is their own word or short phrase. tone is pleasant, unpleasant or mixed.
+- events: things that happened or that they did. what is a short plain phrase.
+- self_talk: things they tell themselves or realise about themselves.
+- helped: something they say made things better or worse. Only if they say so.
+- matters: decisions, goals, or things they say they want or do not want.
+- open_loops: things they say they still need to do or decide, with any deadline they give.
+
+Rules
+- quote: copy the words exactly from the entry, one sentence or less, in the language they wrote it in. If you cannot quote it, leave the item out.
+- Do not add feelings they did not name. Do not add causes they did not state.
+- Empty lists are fine. An entry where nothing much happened has nearly empty lists.
+
+Example
+Entry: "Lunch with Kavya. She thinks I should apply for the Pune job. I laughed it off but I've been thinking about it all evening. Felt lighter after the walk back. Must update my CV this week."
+{"people":[{"name":"Kavya","quote":"Lunch with Kavya."}],"feelings":[{"word":"lighter","tone":"pleasant","quote":"Felt lighter after the walk back."}],"events":[{"what":"lunch with Kavya","quote":"Lunch with Kavya."},{"what":"laughed off the Pune job idea","quote":"I laughed it off"}],"self_talk":[{"quote":"I've been thinking about it all evening"}],"helped":[{"what":"the walk back","quote":"Felt lighter after the walk back."}],"matters":[{"what":"the Pune job","quote":"She thinks I should apply for the Pune job."}],"open_loops":[{"what":"update my CV this week","quote":"Must update my CV this week."}]}

@@ -207,14 +207,16 @@ final class OpenAICompatibleProvider: LLMProvider, @unchecked Sendable {
             // Ask for token counts at the end of the stream.
             body["stream_options"] = ["include_usage": true]
         }
+        // The shape goes in as its own text, so its fields keep the order they are written in.
+        let slot = SchemaSlot()
+        let shape = extras ? request.jsonSchema : nil
         if extras {
             // OpenAI's own name for the ceiling is the newer one; other services still use the older.
             body[endpoint.kind == .openai ? "max_completion_tokens" : "max_tokens"] = request.maxTokens
-            if let schemaData = request.jsonSchema {
-                let schema = try JSONSerialization.jsonObject(with: schemaData)
+            if shape != nil {
                 body["response_format"] = [
                     "type": "json_schema",
-                    "json_schema": ["name": "reply", "strict": true, "schema": schema],
+                    "json_schema": ["name": "reply", "strict": true, "schema": slot.placeholder],
                 ]
             }
         }
@@ -223,7 +225,7 @@ final class OpenAICompatibleProvider: LLMProvider, @unchecked Sendable {
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "content-type")
         sign(&urlRequest, with: endpoint)
-        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+        urlRequest.httpBody = slot.fill(try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]), with: shape)
         return urlRequest
     }
 

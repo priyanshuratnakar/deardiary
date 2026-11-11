@@ -90,7 +90,7 @@ So redesign helps Talk only with a model big enough to follow it. That needs tes
 
 Three steps, each its own milestone, each shown before it is built.
 
-**1. A better local model, measured (small).** Download `gemma4:12b` (about 8 GB). Compare it with `llama3.2` and `qwen3.5:9b` on a fixed set of made-up entries: does the JSON hold, are quotes exact, how good is Talk by the rubric below, how fast is it. Then have the app send the right settings for each job. This step also tells us whether one model can do both jobs.
+**1. A better local model, measured (small). Done on 12 November: see [model-comparison.md](model-comparison.md).** Download `gemma4:12b` (about 8 GB). Compare it with `llama3.2` and `qwen3.5:9b` on a fixed set of made-up entries: does the JSON hold, are quotes exact, how good is Talk by the rubric below, how fast is it. Then have the app send the right settings for each job. This step also tells us whether one model can do both jobs.
 
 **2. Talk that is specific (medium).** New instructions: plain voice, named moves, examples, a private planning step for models that can think, memory used for contrast, and asking what the writer wants. A way to end a talk in one line of their own words. A check in code for stock phrases. The crisis rule kept above everything.
 

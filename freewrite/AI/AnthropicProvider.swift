@@ -247,18 +247,20 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
         urlRequest.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         urlRequest.setValue(apiVersion, forHTTPHeaderField: "anthropic-version")
 
+        // The shape goes in as its own text, so its fields keep the order they are written in.
+        let slot = SchemaSlot()
+        let shape = extras ? request.jsonSchema : nil
         if extras {
             if request.retryIfDeclined {
                 body["fallbacks"] = "default"
                 urlRequest.setValue(declineRetryBeta, forHTTPHeaderField: "anthropic-beta")
             }
-            if let schemaData = request.jsonSchema {
-                let schema = try JSONSerialization.jsonObject(with: schemaData)
-                body["output_config"] = ["format": ["type": "json_schema", "schema": schema]]
+            if shape != nil {
+                body["output_config"] = ["format": ["type": "json_schema", "schema": slot.placeholder]]
             }
         }
 
-        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+        urlRequest.httpBody = slot.fill(try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]), with: shape)
         return urlRequest
     }
 
