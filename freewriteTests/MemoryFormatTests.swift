@@ -84,6 +84,10 @@ import Testing
         #expect(result.helped.isEmpty)
         #expect(result.matters.isEmpty)
         #expect(result.openLoops == [DigestResult.Noted(what: "think about it", quote: "I said I needed to think about it.")])
+        #expect(result.links.isEmpty)
+
+        let linked = try DigestParser.parse(DigestJSON.reply(links: [DigestJSON.link("Kavya", "the Pune job", "She thinks I should apply for the Pune job.")]))
+        #expect(linked.links == [DigestResult.Link(from: "Kavya", to: "the Pune job", quote: "She thinks I should apply for the Pune job.")])
     }
 
     @Test func readsAnEmptyButValidReply() throws {
@@ -108,6 +112,8 @@ import Testing
         "[]",
         "Here is the JSON you asked for: {\"people\": []}",
         "{\"people\": []}",
+        // A reply in the shape used before links were asked for is refused, not half read.
+        "{\"people\":[],\"topics\":[],\"feelings\":[],\"happened\":[],\"self_talk\":[],\"helped\":[],\"matters\":[],\"open_loops\":[]}",
     ])
     func refusesAnythingThatIsNotTheExpectedObject(reply: String) {
         #expect(throws: DigestParseError.self) {
@@ -127,6 +133,9 @@ import Testing
     @Test func refusesAnItemWithAMissingOrExtraField() {
         let missing = DigestJSON.reply(people: [["name": "Meera"]])
         let extra = DigestJSON.reply(happened: [["what": "a call", "quote": "q", "confidence": "high"]])
+        // A link is two names and a line. The AI may not add a reason of its own.
+        let explained = DigestJSON.reply(links: [["from": "Kavya", "to": "the Pune job", "quote": "q", "reason": "pressures them"]])
+        #expect(throws: DigestParseError.self) { _ = try DigestParser.parse(explained) }
         // The AI is not asked for a summary, a description or a diagnosis, and may not add one.
         let described = DigestJSON.reply(people: [["name": "Meera", "quote": "q", "summary": "Hard to refuse."]])
 
@@ -168,12 +177,13 @@ import Testing
         let schema = try #require(try JSONSerialization.jsonObject(with: DigestSchema.data) as? [String: Any])
         let properties = try #require(schema["properties"] as? [String: Any])
 
-        #expect(Set(properties.keys) == ["people", "topics", "feelings", "happened", "self_talk", "helped", "matters", "open_loops"])
+        #expect(Set(properties.keys) == ["people", "topics", "feelings", "happened", "self_talk", "helped", "matters", "open_loops", "links"])
 
         func fields(_ key: String) -> Set<String> {
             Set((((properties[key] as? [String: Any])?["items"] as? [String: Any])?["properties"] as? [String: Any] ?? [:]).keys)
         }
         #expect(fields("people") == ["name", "quote"])
+        #expect(fields("links") == ["from", "to", "quote"])
         #expect(fields("topics") == ["name", "quote"])
         #expect(fields("feelings") == ["word", "tone", "quote"])
         #expect(fields("self_talk") == ["quote"])
@@ -195,7 +205,8 @@ import Testing
     @Test func theShapeIsWrittenInTheOrderItIsBestFilledIn() {
         // A model writes its reply in the order the shape lists its fields (rule 11 of M8):
         // who and what first, then what was felt, and what helped only after the feelings.
-        let order = ["\"people\": {", "\"topics\": {", "\"feelings\": {", "\"happened\": {", "\"self_talk\": {", "\"helped\": {", "\"matters\": {", "\"open_loops\": {"]
+        // Links come last: they are about the things already listed.
+        let order = ["\"people\": {", "\"topics\": {", "\"feelings\": {", "\"happened\": {", "\"self_talk\": {", "\"helped\": {", "\"matters\": {", "\"open_loops\": {", "\"links\": {"]
         let places = order.compactMap { DigestSchema.json.range(of: $0)?.lowerBound }
 
         #expect(places.count == order.count)
@@ -220,8 +231,8 @@ import Testing
         }
         check(schema)
 
-        // The reply itself plus the eight kinds of item.
-        #expect(objectsChecked == 9)
+        // The reply itself plus the nine kinds of item.
+        #expect(objectsChecked == 10)
     }
 }
 

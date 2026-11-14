@@ -60,6 +60,7 @@ Shown in Settings under "Memory is On", and under the map. File: `freewrite/Memo
 | A tidy with nothing to do | Tidied on Monday 30 November 2026: nothing needed changing. |
 | The tidy's answer was unusable | The last tidy couldn't be used, so nothing was changed. |
 | Some entries were read before memory took the shape of a journal | Memory now keeps your own words in place of the AI's. Rebuild memory to bring earlier entries into the new shape. |
+| Some entries were read before links were added | Memory can now link the things an entry connects, such as a person and what they asked. Rebuild memory to add those links to earlier entries. The map is laid out afresh afterwards. |
 | Before a rebuild | This has the AI read 9 entries again and replaces what it has learned. Your fixes are kept. |
 | Before forgetting | This deletes the memory folder, including your fixes, and turns memory off. Your entries are not touched. |
 
@@ -90,6 +91,7 @@ Files: `freewrite/Map/MapView.swift`, `freewrite/Map/MapDetailView.swift`.
 | Before removing a link | Remove the link between “Meera” and “The pricing page”? The AI will not put it back. |
 | A link made by hand | Linked by you. There is no quoted line behind this. |
 | A link the app made | in the same sentence |
+| A link the AI proposed and the app checked against the entry | shown by a line you wrote |
 | Before marking something done | Mark this as done? It leaves the map. The line stays on its day, marked done. |
 | Before dropping something | Not doing this after all? It leaves the map. The line stays on its day. |
 

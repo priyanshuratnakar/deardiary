@@ -79,6 +79,7 @@ def memory_app(default_settings):
             data = json.loads(r["text"])
             quotes = [x["quote"] for group in data.values() for x in group]
             row.update(ok=True, items=sum(len(g) for g in data.values()), quotes=len(quotes), exact=sum(in_entry(q, e["text"]) for q in quotes))
+            row["links"] = len(data.get("links", []))
             names = " ".join(norm(x["name"]) for x in data["people"])
             row["people"] = sum(norm(p).replace("dr. ", "") in names for p in e["people"])
             again = [x["name"] for x in data["people"] if key(x["name"]) in people] + [x["name"] for x in data["topics"] if key(x["name"]) in topics] \
@@ -95,6 +96,7 @@ def memory_app(default_settings):
                 "H: " + "; ".join(x["what"] for x in data["helped"]) if data["helped"] else "",
                 "M: " + "; ".join(x["what"] for x in data["matters"]) if data["matters"] else "",
                 "O: " + "; ".join(x["what"] for x in data["open_loops"]) if data["open_loops"] else "",
+                "L: " + "; ".join("%s~%s" % (x["from"], x["to"]) for x in data["links"]) if data.get("links") else "",
                 "AGAIN: " + ", ".join(again) if again else ""]))
         except Exception as error:
             row["labels"] = "UNREADABLE: " + (r.get("error") or str(error))[:80] + " | " + (r.get("text") or "")[:80].replace("\n", " ")

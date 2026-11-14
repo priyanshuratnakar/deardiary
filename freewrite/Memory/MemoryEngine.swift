@@ -47,6 +47,9 @@ struct MemorySummary: Equatable {
     var lastTidy: String? = nil
     /// True when some entries were read before M14 and are still kept in the old shape.
     var hasOlderShape = false
+    /// True when some entries were read before the AI was asked which things an entry
+    /// connects, so the map has no such links for them yet.
+    var lacksLinks = false
 }
 
 /// Published on the main thread for the Settings window.
@@ -194,6 +197,9 @@ actor MemoryEngine {
         guard env.isEnabled() else { return }
         await waitUntilIdle()
         env.store.forgetAIBuilt()
+        // A rebuild changes what is linked to what, so the map is laid out afresh the next
+        // time it opens. Kept positions would leave newly linked dots far apart.
+        env.store.forgetGraphPositions()
         fingerprints = [:]
         pausedUntil = nil
         summary = MemorySummary()
@@ -222,6 +228,7 @@ actor MemoryEngine {
         let digests = env.store.loadAllDigests()
         summary.digestedEntries = digests.filter { !$0.failed }.count
         summary.hasOlderShape = digests.contains { !$0.failed && !$0.isJournalShaped }
+        summary.lacksLinks = digests.contains { !$0.failed && $0.isJournalShaped && !$0.hasLinks }
         summary.lastTidy = env.defaults.string(forKey: TidyKey.line)
         await publish()
     }
@@ -542,6 +549,7 @@ actor MemoryEngine {
             if let result {
                 let outcome = MemoryApplier.apply(result, for: entry, to: &updated, pins: pins)
                 record.lines = outcome.lines
+                record.links = outcome.links
                 record.thoughts = outcome.touched
                 record.openLoops = outcome.lines.filter { $0.kind == .stillOpen }.map(\.quote)
                 record.rejected = outcome.rejected
@@ -584,6 +592,7 @@ actor MemoryEngine {
 
         summary.isWorking = false
         summary.hasOlderShape = digests.values.contains { !$0.failed && !$0.isJournalShaped }
+        summary.lacksLinks = digests.values.contains { !$0.failed && $0.isJournalShaped && !$0.hasLinks }
         await publish()
         return .finished(digested: digested)
     }

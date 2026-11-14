@@ -234,6 +234,11 @@ extension MemoryStore {
     var graphURL: URL { folder.appendingPathComponent("graph.json") }
 
     /// Where each dot was left, by thought id. Empty if the file is missing or unreadable.
+    /// Forgets where every dot sat, so the map settles afresh the next time it opens.
+    func forgetGraphPositions() {
+        try? FileManager.default.removeItem(at: graphURL)
+    }
+
     func loadGraphPositions() -> [String: CGPoint] {
         guard let data = try? Data(contentsOf: graphURL),
               let file = try? JSONDecoder().decode(GraphFile.self, from: data) else {

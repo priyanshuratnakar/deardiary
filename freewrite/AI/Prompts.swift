@@ -319,6 +319,7 @@ enum Prompts {
     - helped: something they did or that happened, after which they say they felt better or things went better ("my head was quiet afterwards" after a run: what is "a run before work"). what is the thing that helped, in a few plain words. Only when the entry itself puts the two together.
     - matters: what they say they want, do not want, or have decided.
     - open_loops: things they say they still need to do or decide, with any deadline they give. what names who or what it is about ("tell Meera about the pricing page by Tuesday", not "tell her").
+    - links: pairs of things from your lists above that this entry connects: a person and what they asked or said, a feeling and what it was about, something that helped and how they felt after. from and to are a name, a feeling's word or a what, exactly as you wrote it above. quote is the sentence in the entry that shows the two belong together; "she" or "it" in that sentence may stand for one of them. If no sentence shows it, leave the pair out. Two things are not linked just because they are in the same entry.
 
     Rules
     - quote: copy the words exactly from the entry, one sentence or less, in the language they wrote it in. If you cannot quote it, leave the item out.
@@ -327,7 +328,7 @@ enum Prompts {
 
     Example
     Entry: "Lunch with Kavya. She thinks I should apply for the Pune job. I laughed it off but I've been thinking about it all evening. Felt lighter after the walk back. Must update my CV this week."
-    {"people":[{"name":"Kavya","quote":"Lunch with Kavya."}],"topics":[{"name":"the Pune job","quote":"She thinks I should apply for the Pune job."}],"feelings":[{"word":"lighter","tone":"pleasant","quote":"Felt lighter after the walk back."}],"happened":[{"what":"lunch with Kavya","quote":"Lunch with Kavya."},{"what":"laughed off the Pune job idea","quote":"I laughed it off"}],"self_talk":[{"quote":"I've been thinking about it all evening"}],"helped":[{"what":"the walk back","quote":"Felt lighter after the walk back."}],"matters":[],"open_loops":[{"what":"update my CV this week","quote":"Must update my CV this week."}]}
+    {"people":[{"name":"Kavya","quote":"Lunch with Kavya."}],"topics":[{"name":"the Pune job","quote":"She thinks I should apply for the Pune job."}],"feelings":[{"word":"lighter","tone":"pleasant","quote":"Felt lighter after the walk back."}],"happened":[{"what":"lunch with Kavya","quote":"Lunch with Kavya."},{"what":"laughed off the Pune job idea","quote":"I laughed it off"}],"self_talk":[{"quote":"I've been thinking about it all evening"}],"helped":[{"what":"the walk back","quote":"Felt lighter after the walk back."}],"matters":[],"open_loops":[{"what":"update my CV this week","quote":"Must update my CV this week."}],"links":[{"from":"Kavya","to":"the Pune job","quote":"She thinks I should apply for the Pune job."},{"from":"lighter","to":"the walk back","quote":"Felt lighter after the walk back."}]}
     """
 
     /// The material for one reading: the names already in memory, and the entry.

@@ -78,7 +78,7 @@ Memory is a folder of small notes built from what you write. It is the single so
 - **Everything else is kept on the day**, in your own words, with a small word for what it is: felt (pleasant, unpleasant or mixed), told yourself, happened, wanted.
 - **The AI writes nothing about you.** No description of a person, no notes on how something shifted, no profile in prose.
 - **What recurs is counted by the app** and said in fixed wording: "In 4 entries", "On 3 of those 4 days you also named an unpleasant feeling", "Open since Sunday 8 November". Never "because", "always" or "tends to".
-- **A line between two thoughts means one thing:** you wrote them in the same sentence, or you linked them by hand.
+- **A line between two thoughts always has a line of yours behind it.** Two things in the same sentence are linked by the app. The AI may also say that two things an entry connects belong together, such as a person and the job she suggested where the sentence only says "she", but only by pointing at your sentence that shows it, and the app checks that sentence. (Added on 14 November 2026: with same-sentence links alone, real connections were missing from the map.) Or you linked them by hand.
 
 ### What it stores
 
@@ -95,7 +95,7 @@ Thought notes link to each other with `[[wikilinks]]`, so the memory folder also
 ### How it gets built
 
 1. **Trigger.** An entry is digested when it has settled: you start a new entry, the day changes, the app has been idle for 10 minutes, or you turn on talk or open the map. Never while you are typing.
-2. **Read.** The AI gets the entry and the names already in memory (people, topics, feelings in your words), so it uses a name that exists instead of making a second one. It returns a plain list of what is in the entry: people, topics, feelings, what happened, what you told yourself, what helped, what you want, what is still open. Every item carries a line copied from the entry.
+2. **Read.** The AI gets the entry and the names already in memory (people, topics, feelings in your words), so it uses a name that exists instead of making a second one. It returns a plain list of what is in the entry: people, topics, feelings, what happened, what you told yourself, what helped, what you want, what is still open, and which of those the entry connects. Every item carries a line copied from the entry.
 3. **Apply.** The app checks every line against the entry and keeps the entry's own text. A line that is not there is rejected, so the AI cannot invent evidence. The app, not the AI, decides what becomes a thought: something "helped" only if the entry itself puts it with a pleasant feeling you named; a feeling becomes a thought only when its words come up on a second day. Pinned fixes win over anything the AI proposes.
 4. **Tidy.** About once a week, or on request, a second pass folds together two thoughts that are the same thing under different names, and retires people and topics that came up once and never returned. It no longer looks for patterns or writes a profile.
 

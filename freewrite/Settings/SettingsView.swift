@@ -470,6 +470,9 @@ struct SettingsView: View {
     /// Shown while some entries are still kept the way memory was built before M14.
     static let olderShapeLine = "Memory now keeps your own words in place of the AI's. Rebuild memory to bring earlier entries into the new shape."
 
+    /// Shown while some entries were read before the AI was asked which things an entry connects.
+    static let lacksLinksLine = "Memory can now link the things an entry connects, such as a person and what they asked. Rebuild memory to add those links to earlier entries. The map is laid out afresh afterwards."
+
     private var memorySection: some View {
         VStack(alignment: .leading, spacing: 8) {
             SettingsWordButton(
@@ -497,6 +500,11 @@ struct SettingsView: View {
             // Entries read before memory took the shape of a journal stay as they were until a rebuild.
             if memoryStatus.summary.hasOlderShape, !memoryStatus.summary.isWorking {
                 Text(Self.olderShapeLine)
+                    .font(.system(size: 13))
+                    .foregroundColor(bodyColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if memoryStatus.summary.lacksLinks, !memoryStatus.summary.isWorking {
+                Text(Self.lacksLinksLine)
                     .font(.system(size: 13))
                     .foregroundColor(bodyColor)
                     .fixedSize(horizontal: false, vertical: true)

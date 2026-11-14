@@ -475,3 +475,152 @@ import Testing
         #expect(memory.thoughts["sleep"]?.evidence.count == 3)
     }
 }
+
+/// Links the AI proposes: two things an entry connects, with the writer's line that shows it.
+@Suite struct ShownLinksTests {
+
+    /// The entry from the bug report: three things a reader sees as connected, where the
+    /// sentence that connects two of them says "She", not "Kavya".
+    private let kavya = MemoryWeek.Entry(
+        id: UUID(uuidString: "00000000-0000-0000-0000-000000000031")!,
+        startedAt: MemoryWeek.day(12, hour: 21),
+        text: "Lunch with Kavya. She thinks I should apply for the Pune job. Felt sick all evening. Paid the rent."
+    )
+
+    private func reply(links: [[String: Any]]) -> String {
+        DigestJSON.reply(
+            people: [DigestJSON.named("Kavya", "Lunch with Kavya.")],
+            topics: [DigestJSON.named("the Pune job", "She thinks I should apply for the Pune job."), DigestJSON.named("the rent", "Paid the rent.")],
+            feelings: [DigestJSON.felt("sick", "unpleasant", "Felt sick all evening.")],
+            links: links
+        )
+    }
+
+    private func read(_ reply: String, _ entry: MemoryWeek.Entry, into memory: inout MemorySnapshot, digests: inout [EntryDigest], pins: Pins = Pins()) throws -> MemoryApplier.Outcome {
+        let outcome = MemoryApplier.apply(try DigestParser.parse(reply), for: MemoryWeek.digested(entry), to: &memory, pins: pins)
+        digests.removeAll { $0.entryID == entry.id }
+        digests.append(EntryDigest(
+            entryID: entry.id, entryDate: MemoryText.day(entry.startedAt), textHash: "made-up", digestedAt: MemoryWeek.day(20),
+            model: "model-for-memory", summary: "", thoughts: outcome.touched, openLoops: [], rejected: outcome.rejected,
+            inputTokens: nil, outputTokens: nil, failed: false, failureReason: nil, lines: outcome.lines, links: outcome.links
+        ))
+        FeelingDots.reconcile(&memory, with: digests, pins: pins)
+        return outcome
+    }
+
+    @Test func withoutTheAIsLinkASentenceThatSaysSheLeavesThemApart() throws {
+        var memory = MemorySnapshot()
+        var digests: [EntryDigest] = []
+        _ = try read(reply(links: []), kavya, into: &memory, digests: &digests)
+
+        // This is the bug: "She" is not the word "Kavya", so nothing joins her to the job.
+        #expect(memory.thoughts["kavya"]?.links.isEmpty == true)
+        #expect(memory.thoughts["the-pune-job"]?.links.isEmpty == true)
+    }
+
+    @Test func aLinkWithALineOfTheirsBehindItIsDrawn() throws {
+        var memory = MemorySnapshot()
+        var digests: [EntryDigest] = []
+        let outcome = try read(reply(links: [DigestJSON.link("Kavya", "the Pune job", "She thinks I should apply for the Pune job.")]), kavya, into: &memory, digests: &digests)
+
+        #expect(outcome.rejected.isEmpty)
+        #expect(outcome.links == [DayLink(from: "Kavya", to: "the Pune job", quote: "She thinks I should apply for the Pune job.")])
+        #expect(memory.thoughts["kavya"]?.links == [
+            ThoughtLink(target: "the-pune-job", reason: ShownLinks.reason, entryID: kavya.id, date: "2026-11-12", quote: "She thinks I should apply for the Pune job."),
+        ])
+        // The rent was paid the same day and is joined to nothing but the day.
+        #expect(memory.thoughts["the-rent"]?.links.isEmpty == true)
+        #expect(!memory.thoughts.values.contains { $0.links.contains { $0.target == "the-rent" } })
+        // Reading the entry again changes nothing.
+        let once = memory
+        _ = try read(reply(links: [DigestJSON.link("Kavya", "the Pune job", "She thinks I should apply for the Pune job.")]), kavya, into: &memory, digests: &digests)
+        #expect(memory == once)
+    }
+
+    @Test func aLinkIsRefusedUnlessItsLineIsRealAndAboutOneOfTheTwo() throws {
+        var memory = MemorySnapshot()
+        var digests: [EntryDigest] = []
+        let outcome = try read(reply(links: [
+            // The line was never written.
+            DigestJSON.link("Kavya", "the Pune job", "Kavya is pushing me towards the Pune job."),
+            // The line is real but names neither of the two: nothing in it shows this link.
+            DigestJSON.link("Kavya", "the Pune job", "Paid the rent."),
+            // One end is not something this reply listed.
+            DigestJSON.link("Kavya", "my career", "She thinks I should apply for the Pune job."),
+            // A thing is not linked to itself, however it is written.
+            DigestJSON.link("Kavya", "kavya", "Lunch with Kavya."),
+        ]), kavya, into: &memory, digests: &digests)
+
+        #expect(outcome.links.isEmpty)
+        #expect(outcome.rejected.map(\.reason) == [
+            "Its quote is not in the entry.",
+            "Its line names neither of the two.",
+            "It linked something that is not in its own lists.",
+            "It linked a thing to itself.",
+        ])
+        #expect(memory.thoughts.values.allSatisfy { $0.links.isEmpty })
+    }
+
+    @Test func aLinkTheUserRemovedIsNotDrawnAgain() throws {
+        var pins = Pins()
+        pins.linksRemoved = [Pins.LinkPin(from: "the-pune-job", to: "kavya", reason: nil)]
+        var memory = MemorySnapshot()
+        var digests: [EntryDigest] = []
+        _ = try read(reply(links: [DigestJSON.link("Kavya", "the Pune job", "She thinks I should apply for the Pune job.")]), kavya, into: &memory, digests: &digests, pins: pins)
+
+        #expect(memory.thoughts["kavya"]?.links.isEmpty == true)
+    }
+
+    @Test func aLinkToAFeelingIsDrawnOnceTheFeelingHasBecomeAThought() throws {
+        var memory = MemorySnapshot()
+        var digests: [EntryDigest] = []
+        let feelingLink = DigestJSON.link("sick", "the Pune job", "Felt sick all evening.")
+        let outcome = try read(reply(links: [feelingLink]), kavya, into: &memory, digests: &digests)
+
+        // The link is checked and kept with the day, but "sick" has been named once: it is
+        // a line on the day, not a dot, so there is nothing to draw the link to yet.
+        #expect(outcome.links == [DayLink(from: "sick", to: "the Pune job", quote: "Felt sick all evening.")])
+        #expect(memory.thoughts["felt-sick"] == nil)
+        #expect(memory.thoughts.values.allSatisfy { $0.links.isEmpty })
+
+        // A later entry names the same feeling. It becomes a thought, and the link kept
+        // from the first day is drawn.
+        let later = MemoryWeek.Entry(id: UUID(uuidString: "00000000-0000-0000-0000-000000000032")!, startedAt: MemoryWeek.day(15, hour: 21), text: "Felt sick again before the call. Slept early.")
+        _ = try read(DigestJSON.reply(feelings: [DigestJSON.felt("sick", "unpleasant", "Felt sick again before the call.")]), later, into: &memory, digests: &digests)
+
+        let sick = try #require(memory.thoughts["felt-sick"])
+        #expect(sick.evidence.count == 2)
+        #expect(sick.links == [
+            ThoughtLink(target: "the-pune-job", reason: ShownLinks.reason, entryID: kavya.id, date: "2026-11-12", quote: "Felt sick all evening."),
+        ])
+    }
+
+    @Test func somethingStillOpenIsLinkedByTheNameItIsKeptUnder() throws {
+        var memory = MemorySnapshot()
+        var digests: [EntryDigest] = []
+        let reply = DigestJSON.reply(
+            people: [DigestJSON.named("Meera", "I kept drafting the reply to Meera in my head.")],
+            openLoops: [DigestJSON.noted("tell her by Tuesday", "Need to tell her by Tuesday.")],
+            // The AI calls it by its own phrase; the thought is named by the writer's line.
+            links: [DigestJSON.link("tell her by Tuesday", "Meera", "Need to tell her by Tuesday.")]
+        )
+        let outcome = try read(reply, MemoryWeek.sunday, into: &memory, digests: &digests)
+
+        #expect(outcome.links == [DayLink(from: "Need to tell her by Tuesday", to: "Meera", quote: "Need to tell her by Tuesday.")])
+        #expect(memory.thoughts["meera"]?.links.map(\.target) == ["need-to-tell-her-by-tuesday"])
+    }
+
+    @Test func aSharedSentenceAndAProposedLinkForTheSamePairAreOneLink() throws {
+        var memory = MemorySnapshot()
+        var digests: [EntryDigest] = []
+        let reply = DigestJSON.reply(
+            people: [DigestJSON.named("Meera", "Meera asked if I could also take the pricing page.")],
+            topics: [DigestJSON.named("the pricing page", "Meera asked if I could also take the pricing page.")],
+            links: [DigestJSON.link("Meera", "the pricing page", "Meera asked if I could also take the pricing page.")]
+        )
+        _ = try read(reply, MemoryWeek.friday, into: &memory, digests: &digests)
+
+        #expect(memory.thoughts["meera"]?.links.count == 1)
+        #expect(memory.thoughts["meera"]?.links.first?.reason == MemoryApplier.sameSentence)
+    }
+}

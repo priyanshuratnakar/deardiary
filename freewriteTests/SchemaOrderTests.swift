@@ -126,6 +126,9 @@ import Testing
         #expect(people < feelings)
         #expect(feelings < helped)
         #expect(helped < openLoops)
+        // Links come last, once everything they can join has been listed.
+        let links = try #require(position("links"))
+        #expect(openLoops < links)
 
         // Inside a person: the name, then the line. Inside a feeling: the word, its tone, then the line.
         let name = try #require(position("name", after: people))

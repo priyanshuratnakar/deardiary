@@ -507,6 +507,37 @@ import Testing
         #expect(sandbox.store.loadSnapshot() == (try MemoryWeek.read().memory))
     }
 
+    @Test func entriesReadBeforeLinksWereAskedForAreLeftAloneAndSettingsIsTold() async throws {
+        let sandbox = MemorySandbox()
+        for entry in MemoryWeek.entries {
+            sandbox.writeEntry(entry)
+        }
+        // A memory folder as M14 left it: the day's lines are there, links were never asked for.
+        let read = try MemoryWeek.read()
+        try sandbox.store.write(read.memory, replacing: MemorySnapshot())
+        for var digest in read.digests {
+            digest.links = nil
+            try sandbox.store.saveDigest(digest)
+        }
+        try sandbox.store.saveGraph(MemoryGraph(nodes: [GraphNode(id: "meera", label: "Meera", kind: .person, weight: 3, position: CGPoint(x: 40, y: -60))], edges: []))
+        let provider = FakeProvider(MemoryWeek.replies.map { .reply([$0]) })
+        let engine = sandbox.engine(provider)
+
+        // Nothing is sent by itself: the entries have not changed.
+        #expect(await engine.runPass() == .finished(digested: 0))
+        #expect(provider.requests.isEmpty)
+        #expect(await summary(of: engine).lacksLinks)
+        #expect(await summary(of: engine).hasOlderShape == false)
+
+        // A rebuild reads them again, and the map will be laid out afresh.
+        #expect(sandbox.store.loadGraphPositions()["meera"] != nil)
+        await engine.rebuild()
+        #expect(provider.requests.count == 4)
+        #expect(await summary(of: engine).lacksLinks == false)
+        #expect(sandbox.store.loadDigest(entryID: MemoryWeek.monday.id)?.links == [])
+        #expect(sandbox.store.loadGraphPositions().isEmpty)
+    }
+
     @Test func theSameTextAlwaysHasTheSameFingerprint() {
         #expect(MemoryEngine.fingerprint("hello") == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
         #expect(MemoryEngine.fingerprint("hello") != MemoryEngine.fingerprint("hello "))

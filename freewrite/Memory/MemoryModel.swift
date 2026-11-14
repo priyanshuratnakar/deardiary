@@ -100,6 +100,20 @@ struct DayLine: Codable, Equatable {
     var tone: Tone? = nil
 }
 
+/// Two things an entry connects, with the writer's own line that shows it.
+///
+/// The AI proposes these and the app checks each one (see MemoryApplier). They are kept
+/// with the entry's digest by name, not by thought, so that a link to a feeling can be
+/// drawn later, once that feeling has been named on a second day and become a thought.
+struct DayLink: Codable, Equatable {
+    /// The name of a person or topic, a feeling's word, or the name of something that
+    /// helped or is still open.
+    var from: String
+    var to: String
+    /// The entry's exact text.
+    var quote: String
+}
+
 /// A line quoted from an entry. The quote is always the entry's exact text.
 struct Evidence: Equatable {
     var entryID: UUID
@@ -200,9 +214,14 @@ struct EntryDigest: Codable, Equatable {
     /// The writer's own lines from this entry, each with a word for what it is.
     /// Nil in a digest written before M14, which kept a summary in the AI's words instead.
     var lines: [DayLine]? = nil
+    /// The pairs of things this entry connects, each with the line that shows it.
+    /// Nil in a digest written before the AI was asked for them (14 November 2026).
+    var links: [DayLink]? = nil
 
     /// True for a digest in the shape memory has had since M14.
     var isJournalShaped: Bool { lines != nil }
+    /// True for a digest read since the AI was asked which things an entry connects.
+    var hasLinks: Bool { links != nil }
 
     /// The names used in the JSON file.
     private enum CodingKeys: String, CodingKey {
@@ -220,6 +239,7 @@ struct EntryDigest: Codable, Equatable {
         case failed
         case failureReason = "failure_reason"
         case lines
+        case links
     }
 }
 

@@ -24,8 +24,12 @@
 //  - Feelings, what happened, what they told themselves and what they wanted
 //    stay on the day as lines (`DayLine`). A feeling becomes a thought later,
 //    once the same words have been used on two days (`FeelingDots`).
-//  - A link between two thoughts means one thing: the writer put them in the
-//    same sentence. The app works that out; the AI is not asked.
+//  - A link between two thoughts always has a line of the writer's behind it.
+//    Two thoughts in the same sentence are linked by the app. The AI may also
+//    propose that two things belong together ("Kavya" and "the Pune job",
+//    where the sentence says "She"), but only by pointing at the sentence that
+//    shows it, and the app checks that sentence (`ShownLinks`). Before 14 Nov
+//    2026 only the first kind existed, and real connections went missing.
 //
 //  This file only works on data in hand. It does not read or write files.
 //
@@ -51,6 +55,8 @@ enum MemoryApplier {
         var rejected: [EntryDigest.Rejection] = []
         /// The writer's own lines from this entry, to keep on its day.
         var lines: [DayLine] = []
+        /// The pairs of things this entry connects, each checked, to keep with its digest.
+        var links: [DayLink] = []
     }
 
     // MARK: - Taking an entry back out
@@ -309,7 +315,75 @@ enum MemoryApplier {
             }
         }
 
-        // 7. The user's fixes have the last word.
+        // 7. Links the AI proposed. Saying that two things belong together is a judgement,
+        //    so each one is checked: both ends must be things this reply listed, the line
+        //    must be in the entry, and the line must name at least one of the two (the
+        //    other may be "she" or "it"). They are kept by name with the day and drawn by
+        //    `ShownLinks`, because one end may be a feeling that is not a thought yet.
+        struct Listed {
+            /// The name it is kept under: for something still open, the thought's own name.
+            let name: String
+            /// What a line may call it.
+            let mentions: [String]
+            /// Its own line in the entry.
+            let own: String
+        }
+        var listed: [String: Listed] = [:]
+        func list(_ given: String, as name: String? = nil, own rawQuote: String) {
+            guard let own = quote(rawQuote) else { return }
+            let item = Listed(name: MemoryText.singleLine(name ?? given), mentions: [given], own: own)
+            for form in [MemoryText.normalizedName(given), MemoryText.nameWithoutArticle(given), FeelingDots.key(given)] where !form.isEmpty && listed[form] == nil {
+                listed[form] = item
+            }
+        }
+        /// The thing a link calls by this name. A feeling may be named a little differently
+        /// there than in its own list ("felt tight" for "tight").
+        func listedThing(_ name: String) -> Listed? {
+            listed[MemoryText.normalizedName(name)] ?? listed[MemoryText.nameWithoutArticle(name)] ?? listed[FeelingDots.key(name)]
+        }
+        for person in result.people { list(person.name, own: person.quote) }
+        for topic in result.topics { list(topic.name, own: topic.quote) }
+        for feeling in result.feelings { list(feeling.word, own: feeling.quote) }
+        for item in result.helped { list(item.what, own: item.quote) }
+        for item in result.openLoops {
+            if let own = quote(item.quote) {
+                list(item.what, as: openLabel(own), own: item.quote)
+            }
+        }
+
+        for link in result.links {
+            guard let evidence = quote(link.quote) else {
+                reject("link", "Its quote is not in the entry.")
+                continue
+            }
+            guard let from = listedThing(link.from), let to = listedThing(link.to) else {
+                reject("link", "It linked something that is not in its own lists.")
+                continue
+            }
+            guard MemoryText.normalizedName(from.name) != MemoryText.normalizedName(to.name) else {
+                reject("link", "It linked a thing to itself.")
+                continue
+            }
+            let said = MemoryText.normalizedName(evidence)
+            let padded = " " + said + " "
+            let namesOne = (from.mentions + to.mentions).contains { mention in
+                let name = MemoryText.nameWithoutArticle(mention)
+                return name.count >= 3 && padded.contains(" " + name + " ")
+            }
+            let isOnesOwnLine = [from.own, to.own].map(MemoryText.normalizedName).contains { own in
+                !own.isEmpty && (said.contains(own) || own.contains(said))
+            }
+            guard namesOne || isOnesOwnLine else {
+                reject("link", "Its line names neither of the two.")
+                continue
+            }
+            let kept = DayLink(from: from.name, to: to.name, quote: evidence)
+            if !outcome.links.contains(kept) {
+                outcome.links.append(kept)
+            }
+        }
+
+        // 8. The user's fixes have the last word.
         MemoryFixes.enforce(pins, on: &memory)
 
         outcome.touched = touched.filter { memory.thoughts[$0] != nil }.sorted()
@@ -355,6 +429,47 @@ enum MemoryApplier {
                 if !form.isEmpty, known[form] == nil {
                     known[form] = thought.id
                 }
+            }
+        }
+    }
+}
+
+/// Links between thoughts that an entry connects, each with the writer's line that shows it.
+///
+/// The AI proposes them and `MemoryApplier` checks them and keeps them with the day, by
+/// name. Here they are drawn between whichever thoughts go by those names now. That is
+/// done across every day each time, so a link to a feeling appears once the feeling has
+/// become a thought, and a link whose end is gone is simply not drawn.
+enum ShownLinks {
+    /// The reason recorded on such a link.
+    static let reason = "shown by a line you wrote"
+
+    static func reconcile(_ memory: inout MemorySnapshot, with digests: [EntryDigest], pins: Pins) {
+        var known: [String: String] = [:]
+        for thought in memory.thoughts.values.sorted(by: { $0.id < $1.id }) {
+            for name in [thought.label] + thought.aliases {
+                for form in [MemoryText.normalizedName(name), MemoryText.nameWithoutArticle(name)] where !form.isEmpty && known[form] == nil {
+                    known[form] = thought.id
+                }
+            }
+        }
+        func thought(named name: String) -> String? {
+            (known[MemoryText.normalizedName(name)] ?? known[MemoryText.nameWithoutArticle(name)]).map(pins.resolve)
+        }
+
+        for digest in digests.sorted(by: { ($0.entryDate, $0.entryID.uuidString) < ($1.entryDate, $1.entryID.uuidString) }) where !digest.failed {
+            for link in digest.links ?? [] {
+                guard let one = thought(named: link.from), let other = thought(named: link.to), one != other,
+                      memory.thoughts[one] != nil, memory.thoughts[other] != nil,
+                      !pins.isLinkRemoved(one, other) else {
+                    continue
+                }
+                let from = min(one, other), to = max(one, other)
+                // One link per pair from each entry: a shared sentence may already have made it.
+                guard memory.thoughts[from]?.links.contains(where: { $0.target == to && $0.entryID == digest.entryID }) == false else {
+                    continue
+                }
+                memory.thoughts[from]?.links.append(ThoughtLink(target: to, reason: reason, entryID: digest.entryID, date: digest.entryDate, quote: link.quote))
             }
         }
     }
@@ -436,6 +551,8 @@ enum FeelingDots {
             }
         }
 
+        // With the feelings settled, the links kept on each day can be drawn.
+        ShownLinks.reconcile(&memory, with: digests, pins: pins)
         MemoryFixes.enforce(pins, on: &memory)
     }
 

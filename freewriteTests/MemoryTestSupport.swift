@@ -113,6 +113,11 @@ enum DigestJSON {
         ["word": word, "tone": tone, "quote": quote]
     }
 
+    /// Two things the entry connects, and the line that shows it.
+    static func link(_ from: String, _ to: String, _ quote: String) -> [String: Any] {
+        ["from": from, "to": to, "quote": quote]
+    }
+
     /// Something that happened, helped, matters or is still open.
     static func noted(_ what: String, _ quote: String) -> [String: Any] {
         ["what": what, "quote": quote]
@@ -126,7 +131,8 @@ enum DigestJSON {
         selfTalk: [String] = [],
         helped: [[String: Any]] = [],
         matters: [[String: Any]] = [],
-        openLoops: [[String: Any]] = []
+        openLoops: [[String: Any]] = [],
+        links: [[String: Any]] = []
     ) -> String {
         let object: [String: Any] = [
             "people": people,
@@ -137,6 +143,7 @@ enum DigestJSON {
             "helped": helped,
             "matters": matters,
             "open_loops": openLoops,
+            "links": links,
         ]
         let data = try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
         return String(data: data, encoding: .utf8)!
@@ -282,7 +289,8 @@ enum MemoryWeek {
                 outputTokens: nil,
                 failed: false,
                 failureReason: nil,
-                lines: outcome.lines
+                lines: outcome.lines,
+                links: outcome.links
             ))
             FeelingDots.reconcile(&memory, with: digests, pins: Pins())
         }

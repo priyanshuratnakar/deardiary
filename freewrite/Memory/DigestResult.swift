@@ -11,6 +11,11 @@
 //  what is still open. The AI names nothing and explains nothing. The app
 //  decides what becomes a thought and what stays on the day (MemoryApplier).
 //
+//  Last in the reply come links: pairs of the things it listed that the entry
+//  connects ("Kavya" and "the Pune job"), each with the writer's sentence
+//  that shows it. Saying two things belong together is the one judgement the
+//  AI is asked for, and only with a line of the writer's behind it.
+//
 //  The same shape is given to the model as a JSON schema, so the reply is
 //  built to fit. It is still checked here, field by field, because a reply can
 //  be cut short or declined, and because a model that does not support
@@ -53,6 +58,16 @@ struct DigestResult: Equatable {
     var matters: [Noted] = []
     /// What they said they still need to do or decide.
     var openLoops: [Noted] = []
+    /// Pairs of the things listed above that the entry connects, each with the line that shows it.
+    var links: [Link] = []
+
+    /// Two things from the lists, by the names used for them there, and the writer's line
+    /// that shows they belong together.
+    struct Link: Equatable {
+        var from: String
+        var to: String
+        var quote: String
+    }
 }
 
 /// Why a reply could not be used. The reasons never contain entry text.
@@ -69,7 +84,7 @@ enum DigestParser {
             throw DigestParseError(reason: "The reply was not valid JSON.")
         }
         let object = try dictionary(root, named: "reply", keys: [
-            "people", "topics", "feelings", "happened", "self_talk", "helped", "matters", "open_loops",
+            "people", "topics", "feelings", "happened", "self_talk", "helped", "matters", "open_loops", "links",
         ])
 
         func named(_ key: String) throws -> [DigestResult.Named] {
@@ -106,6 +121,10 @@ enum DigestParser {
         result.helped = try noted("helped")
         result.matters = try noted("matters")
         result.openLoops = try noted("open_loops")
+        result.links = try array(object, "links").map { item in
+            let fields = try dictionary(item, named: "links", keys: ["from", "to", "quote"])
+            return DigestResult.Link(from: try string(fields, "from"), to: try string(fields, "to"), quote: try string(fields, "quote"))
+        }
         return result
     }
 
@@ -181,7 +200,8 @@ enum DigestSchema {
         "self_talk",
         "helped",
         "matters",
-        "open_loops"
+        "open_loops",
+        "links"
       ],
       "properties": {
         "people": {
@@ -360,6 +380,33 @@ enum DigestSchema {
               "quote": {
                 "type": "string",
                 "description": "A line copied exactly from this entry."
+              }
+            }
+          }
+        },
+        "links": {
+          "type": "array",
+          "description": "Pairs of things from the lists above that this entry connects.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "from",
+              "to",
+              "quote"
+            ],
+            "properties": {
+              "from": {
+                "type": "string",
+                "description": "A name, a feeling's word or a what, exactly as written in the lists above."
+              },
+              "to": {
+                "type": "string",
+                "description": "A name, a feeling's word or a what, exactly as written in the lists above."
+              },
+              "quote": {
+                "type": "string",
+                "description": "The sentence in this entry that shows the two belong together, copied exactly."
               }
             }
           }
